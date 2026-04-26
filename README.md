@@ -1,21 +1,21 @@
 # StreamIMDb Connector — Stremio Add-on
 
-Add-on local para o Stremio que extrai streams de vídeo directamente do [streamimdb.me](https://streamimdb.me) e os reproduz no player nativo do Stremio, sem abrir o browser.
+A local Stremio add-on that extracts video streams directly from [streamimdb.me](https://streamimdb.me) and plays them natively inside Stremio, without opening a browser.
 
-## Como funciona
+## How it works
 
-1. Clicas num filme ou série no Stremio
-2. O add-on recebe o IMDb ID (ex: `tt0076759`)
-3. Um browser headless (Puppeteer) navega para o `streamimdb.me` em segundo plano
-4. Captura o URL real do stream `.m3u8`
-5. Devolve-o ao Stremio para reprodução nativa
+1. You click on a movie or series in Stremio
+2. The add-on receives the IMDb ID (e.g. `tt0076759`)
+3. A headless browser (Puppeteer) navigates to `streamimdb.me` in the background
+4. It captures the real `.m3u8` stream URL
+5. Returns it to Stremio for native playback
 
-## Requisitos
+## Requirements
 
 - [Node.js](https://nodejs.org) v18+
-- Windows, macOS ou Linux
+- Windows, macOS or Linux
 
-## Instalação
+## Installation
 
 ```bash
 git clone https://github.com/F100Pilot/stremio-addon-streamimdb.git
@@ -23,29 +23,29 @@ cd stremio-addon-streamimdb
 npm install
 ```
 
-## Utilização
+## Usage
 
 ```bash
 node server.js
 ```
 
-O servidor inicia em `http://localhost:7000`.
+The server starts at `http://localhost:7000`.
 
-Para instalar no Stremio, abre o Stremio e adiciona o add-on pelo URL:
+To install in Stremio, open Stremio and add the add-on using this URL:
 ```
 http://localhost:7000/manifest.json
 ```
 
-## Notas
+## Notes
 
-- O primeiro stream demora ~20-30 segundos (o browser headless precisa de carregar as páginas)
-- Suporta filmes e séries
-- Fallback automático para abrir no browser se o stream não for capturado
+- The first stream request takes ~20-30 seconds (the headless browser needs to load the pages)
+- Supports both movies and series
+- Automatically falls back to opening in the browser if the stream cannot be captured
 
-## Estrutura
+## Project structure
 
 ```
-server.js   — servidor HTTP na porta 7000
-addon.js    — manifesto e handler do Stremio SDK
-scraper.js  — lógica Puppeteer para capturar o stream
+server.js   — HTTP server on port 7000
+addon.js    — Stremio SDK manifest and stream handler
+scraper.js  — Puppeteer logic to capture the stream URL
 ```
