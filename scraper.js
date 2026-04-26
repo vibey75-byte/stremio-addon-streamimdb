@@ -117,7 +117,10 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
     await page2.close();
 
-    if (!masterUrl) return null;
+    if (!masterUrl) {
+      console.log('[scraper] Stream não capturado após clique');
+      return null;
+    }
 
     console.log('[scraper] Master URL capturado:', masterUrl.substring(0, 80));
 
@@ -125,8 +128,11 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     const bestUrl = await getHighestQualityStream(masterUrl);
     return { url: bestUrl, type: 'direct' };
 
+  } catch (err) {
+    console.error('[scraper] Erro:', err.message);
+    return null;
   } finally {
-    if (browser) await browser.close();
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
