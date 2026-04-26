@@ -39,10 +39,24 @@ async function fetchVideoSource(imdbId) {
     const executablePath = getBrowserPath();
     console.log('[scraper] Browser path:', executablePath || 'puppeteer bundled');
 
+    // Log do path real que o puppeteer vai usar
+    try {
+      const { executablePath: bundledPath } = require('puppeteer');
+      console.log('[scraper] Puppeteer bundled path:', bundledPath);
+    } catch (e) {}
+
     browser = await puppeteer.launch({
-      headless: true,
+      headless: 'new',
       executablePath,
-      args: LAUNCH_ARGS
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-blink-features=AutomationControlled'
+      ]
     });
 
     // --- Passo 1: carregar embed e capturar URL do Cloudnestra ---
