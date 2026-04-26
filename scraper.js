@@ -5,9 +5,9 @@ const fs = require('fs');
 
 function buildEmbedUrl(imdbId, type, season, episode) {
   if (type === 'series') {
-    return `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`;
+    return `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`;
   }
-  return `https://vidsrc.to/embed/movie/${imdbId}`;
+  return `https://vidsrc.me/embed/movie?imdb=${imdbId}`;
 }
 
 function getBrowserPath() {
@@ -52,34 +52,24 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-    await page.setRequestInterception(true);
 
     let streamUrl = null;
 
-    page.on('request', req => {
-      const url = req.url();
-      if (!streamUrl && url.includes('.m3u8')) {
-        console.log('[scraper] Stream capturado:', url.substring(0, 80));
-        streamUrl = url;
-      }
-      req.continue();
+    // Capturar via responses (não bloqueia pedidos como setRequestInterception)
+    page.on('response', async res => {
+      try {
+        const url = res.url();
+        if (!streamUrl && url.includes('.m3u8')) {
+          console.log('[scraper] Stream capturado:', url.substring(0, 100));
+          streamUrl = url;
+        }
+      } catch (_) {}
     });
 
-    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 5000));
+    await page.goto(embedUrl, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
 
-    // Tentar clicar no play se existir
-    const playSelectors = ['#pl_but', '.play-btn', '.jw-icon-play', '.vjs-big-play-button', '[class*="play"]', 'video'];
-    for (const sel of playSelectors) {
-      try {
-        await page.click(sel);
-        console.log('[scraper] Clicou em:', sel);
-        break;
-      } catch (_) {}
-    }
-
-    // Aguardar stream
-    const deadline = Date.now() + 25000;
+    // Aguardar stream até 30 segundos
+    const deadline = Date.now() + 30000;
     while (!streamUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }

@@ -5,7 +5,7 @@ const manifest = {
   id: 'org.community.vidsrc',
   version: '1.1.0',
   name: 'VidSrc Connector',
-  description: 'Stream filmes e séries via vidsrc.to directamente no Stremio.',
+  description: 'Stream filmes e séries via vidsrc.me directamente no Stremio.',
   types: ['movie', 'series'],
   catalogs: [],
   resources: ['stream'],
@@ -23,8 +23,8 @@ builder.defineStreamHandler(async (args) => {
     const episode = parts[2] || null;
 
     const fallbackUrl = type === 'series'
-      ? `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`
-      : `https://vidsrc.to/embed/movie/${imdbId}`;
+      ? `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`
+      : `https://vidsrc.me/embed/movie?imdb=${imdbId}`;
 
     let result = null;
     try {
