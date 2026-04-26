@@ -2,10 +2,10 @@ const { addonBuilder } = require('stremio-addon-sdk');
 const { fetchVideoSource } = require('./scraper');
 
 const manifest = {
-  id: 'org.community.vidsrc',
-  version: '1.1.0',
-  name: 'VidSrc Connector',
-  description: 'Stream filmes e séries via vidsrc.me directamente no Stremio.',
+  id: 'org.local.streamimdb',
+  version: '1.0.0',
+  name: 'StreamIMDb Connector',
+  description: 'Stream filmes e séries via streamimdb.me directamente no Stremio.',
   types: ['movie', 'series'],
   catalogs: [],
   resources: ['stream'],
@@ -23,8 +23,8 @@ builder.defineStreamHandler(async (args) => {
     const episode = parts[2] || null;
 
     const fallbackUrl = type === 'series'
-      ? `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`
-      : `https://vidsrc.me/embed/movie?imdb=${imdbId}`;
+      ? `https://streamimdb.me/embed/${imdbId}/${season}/${episode}/`
+      : `https://streamimdb.me/embed/${imdbId}/`;
 
     let result = null;
     try {
@@ -37,7 +37,7 @@ builder.defineStreamHandler(async (args) => {
       return {
         streams: [{
           url: result.url,
-          name: 'VidSrc',
+          name: 'StreamIMDb',
           title: 'Stream direto'
         }]
       };
@@ -46,7 +46,7 @@ builder.defineStreamHandler(async (args) => {
     return {
       streams: [{
         externalUrl: fallbackUrl,
-        name: 'VidSrc',
+        name: 'StreamIMDb',
         title: 'Abrir no browser'
       }]
     };

@@ -14,7 +14,10 @@
       "Bash(node server.js)",
       "Bash(curl -s \"http://localhost:7000/manifest.json\")",
       "PowerShell(taskkill /F /IM node.exe)",
-      "PowerShell($conn = Get-NetTCPConnection -LocalPort 7000 -ErrorAction SilentlyContinue; if \\($conn\\) { $pid = $conn.OwningProcess; Write-Host \"PID: $pid\"; taskkill /F /PID $pid } else { Write-Host \"Porta livre\" })"
+      "PowerShell($conn = Get-NetTCPConnection -LocalPort 7000 -ErrorAction SilentlyContinue; if \\($conn\\) { $pid = $conn.OwningProcess; Write-Host \"PID: $pid\"; taskkill /F /PID $pid } else { Write-Host \"Porta livre\" })",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
