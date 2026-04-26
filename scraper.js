@@ -63,9 +63,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     let streamUrl = null;
     page2.on('request', req => {
       const url = req.url();
-      // Prioridade: master.m3u8 > index.m3u8 > qualquer .m3u8
-      if (!streamUrl && url.includes('.m3u8')) {
-        streamUrl = url;
+      if (url.includes('.m3u8')) {
+        // Sempre preferir master.m3u8 (contém todas as qualidades para adaptive bitrate)
+        if (!streamUrl) {
+          streamUrl = url;
+        } else if (!streamUrl.includes('master') && url.includes('master')) {
+          streamUrl = url;
+        }
       }
       req.continue();
     });
