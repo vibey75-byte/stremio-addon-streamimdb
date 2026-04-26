@@ -1,4 +1,6 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const fs = require('fs');
 
 const EMBED_BASE = 'https://streamimdb.me/embed';
@@ -105,7 +107,7 @@ async function fetchVideoSource(imdbId) {
     await page2.click('#pl_but').catch(() => {});
     console.log('[scraper] Play clicado, a aguardar stream...');
 
-    const deadline = Date.now() + 15000;
+    const deadline = Date.now() + 25000;
     while (!streamUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
