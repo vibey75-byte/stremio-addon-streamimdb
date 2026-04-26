@@ -5,13 +5,28 @@ const EMBED_BASE = 'https://streamimdb.me/embed';
 
 function getBrowserPath() {
   const paths = [
+    // Linux (Render)
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    // Windows (local)
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
   ];
-  return paths.find(p => fs.existsSync(p)) || undefined;
+  return paths.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || undefined;
 }
+
+const LAUNCH_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-blink-features=AutomationControlled',
+  '--single-process'
+];
 
 async function fetchVideoSource(imdbId) {
   if (!imdbId || !imdbId.startsWith('tt')) {
@@ -21,10 +36,13 @@ async function fetchVideoSource(imdbId) {
   let browser;
 
   try {
+    const executablePath = getBrowserPath();
+    console.log('[scraper] Browser path:', executablePath || 'puppeteer bundled');
+
     browser = await puppeteer.launch({
       headless: true,
-      executablePath: getBrowserPath(),
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
+      executablePath,
+      args: LAUNCH_ARGS
     });
 
     // --- Passo 1: carregar embed e capturar URL do Cloudnestra ---
@@ -41,7 +59,7 @@ async function fetchVideoSource(imdbId) {
       req.continue();
     });
 
-    await page1.goto(`${EMBED_BASE}/${imdbId}/`, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    await page1.goto(`${EMBED_BASE}/${imdbId}/`, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 5000));
     await page1.close();
 
@@ -49,6 +67,8 @@ async function fetchVideoSource(imdbId) {
       console.log('[scraper] Cloudnestra URL não encontrado');
       return null;
     }
+
+    console.log('[scraper] Cloudnestra URL encontrado');
 
     // --- Passo 2: navegar para Cloudnestra, clicar play, capturar .m3u8 ---
     const page2 = await browser.newPage();
@@ -59,21 +79,18 @@ async function fetchVideoSource(imdbId) {
     let streamUrl = null;
     page2.on('request', req => {
       const url = req.url();
-      // Prioridade: master.m3u8 > index.m3u8 > qualquer .m3u8
       if (!streamUrl && url.includes('.m3u8')) {
         streamUrl = url;
       }
       req.continue();
     });
 
-    await page2.goto(cloudnestraUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
+    await page2.goto(cloudnestraUrl, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 2000));
 
-    // Clicar no botão play
     await page2.click('#pl_but').catch(() => {});
     console.log('[scraper] Play clicado, a aguardar stream...');
 
-    // Esperar pelo stream (até 15 segundos)
     const deadline = Date.now() + 15000;
     while (!streamUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
@@ -82,13 +99,17 @@ async function fetchVideoSource(imdbId) {
     await page2.close();
 
     if (streamUrl) {
-      console.log('[scraper] Stream capturado:', streamUrl);
+      console.log('[scraper] Stream capturado:', streamUrl.substring(0, 80));
       return { url: streamUrl, type: 'direct' };
     }
 
+    console.log('[scraper] Stream não capturado após clique');
+    return null;
+  } catch (err) {
+    console.error('[scraper] Erro ao lançar browser:', err.message);
     return null;
   } finally {
-    if (browser) await browser.close();
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
