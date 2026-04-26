@@ -2,10 +2,10 @@ const { addonBuilder } = require('stremio-addon-sdk');
 const { fetchVideoSource } = require('./scraper');
 
 const manifest = {
-  id: 'org.local.playimdb',
-  version: '1.0.0',
-  name: 'StreamIMDb Connector',
-  description: 'Wrapper para streamimdb.me — abre streams no browser ou tenta extrair link direto.',
+  id: 'org.community.vidsrc',
+  version: '1.1.0',
+  name: 'VidSrc Connector',
+  description: 'Stream filmes e séries via vidsrc.to directamente no Stremio.',
   types: ['movie', 'series'],
   catalogs: [],
   resources: ['stream'],
@@ -16,34 +16,37 @@ const builder = new addonBuilder(manifest);
 
 builder.defineStreamHandler(async (args) => {
   try {
-    // Para séries, o id vem como "tt1234567:1:2" — extrair só o IMDb ID
-    const imdbId = args.id.split(':')[0];
+    const parts = args.id.split(':');
+    const imdbId = parts[0];
+    const type = parts.length > 1 ? 'series' : 'movie';
+    const season = parts[1] || null;
+    const episode = parts[2] || null;
 
-    const fallbackUrl = `https://streamimdb.me/embed/${imdbId}/`;
+    const fallbackUrl = type === 'series'
+      ? `https://vidsrc.to/embed/tv/${imdbId}/${season}/${episode}`
+      : `https://vidsrc.to/embed/movie/${imdbId}`;
 
     let result = null;
     try {
-      result = await fetchVideoSource(imdbId);
+      result = await fetchVideoSource(imdbId, type, season, episode);
     } catch (scraperErr) {
-      console.error(`[scraper] Erro ao extrair fonte: ${scraperErr.message}`);
+      console.error(`[handler] Erro no scraper: ${scraperErr.message}`);
     }
 
     if (result && result.type === 'direct') {
       return {
         streams: [{
           url: result.url,
-          name: 'StreamIMDb',
+          name: 'VidSrc',
           title: 'Stream direto'
         }]
       };
     }
 
-    // iframe ou fallback — abrir no browser
-    const externalUrl = (result && result.url) ? result.url : fallbackUrl;
     return {
       streams: [{
-        externalUrl,
-        name: 'PlayIMDb',
+        externalUrl: fallbackUrl,
+        name: 'VidSrc',
         title: 'Abrir no browser'
       }]
     };
