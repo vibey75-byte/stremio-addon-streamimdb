@@ -24,7 +24,7 @@ builder.defineStreamHandler(async (args) => {
     const episode = parts[2] || null;
 
     const fallbackUrl = type === 'series'
-      ? `https://streamimdb.me/embed/${imdbId}/${season}/${episode}/`
+      ? `https://streamimdb.me/embed/${imdbId}/${season}-${episode}/`
       : `https://streamimdb.me/embed/${imdbId}/`;
 
     let result = null;

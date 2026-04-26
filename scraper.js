@@ -19,7 +19,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   }
 
   const embedUrl = type === 'series'
-    ? `${EMBED_BASE}/${imdbId}/${season}/${episode}/`
+    ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
     : `${EMBED_BASE}/${imdbId}/`;
 
   let browser;
