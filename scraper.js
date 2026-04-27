@@ -1,5 +1,4 @@
 const puppeteer = require('puppeteer');
-const axios = require('axios');
 const fs = require('fs');
 
 function getBrowserPath() {
@@ -25,18 +24,9 @@ function buildEmbedUrl(imdbId, type, season, episode) {
   return `https://cdn.mov2day.xyz/embed/movie/${imdbId}`;
 }
 
-async function getBestQuality(masterUrl, referer = 'https://player.mov2day.xyz/') {
+function parseBestQuality(content, masterUrl) {
   try {
-    const res = await axios.get(masterUrl, {
-      timeout: 8000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer': referer,
-        'Origin': new URL(referer).origin,
-        'Accept': '*/*'
-      }
-    });
-    const lines = res.data.split('\n');
+    const lines = content.split('\n');
     let best = null;
     let bestBandwidth = 0;
     for (let i = 0; i < lines.length; i++) {
@@ -51,7 +41,7 @@ async function getBestQuality(masterUrl, referer = 'https://player.mov2day.xyz/'
     }
     if (best) { console.log(`[scraper] Qualidade: ${Math.round(bestBandwidth / 1000)}kbps`); return best; }
   } catch (e) {
-    console.log('[scraper] Fallback master.m3u8:', e.message);
+    console.log('[scraper] Erro ao parsear qualidade:', e.message);
   }
   return masterUrl;
 }
@@ -98,14 +88,26 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     await page1.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     await page1.setRequestInterception(true);
 
-    let streamUrl = null;
+    let masterUrl = null;
+    let masterContent = null;
+
     page1.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8')) {
-        if (!streamUrl) streamUrl = url;
-        else if (!streamUrl.includes('master') && url.includes('master')) streamUrl = url;
+        if (!masterUrl) masterUrl = url;
+        else if (!masterUrl.includes('master') && url.includes('master')) masterUrl = url;
       }
       req.continue();
+    });
+
+    // Interceptar resposta do master.m3u8 directamente no browser (sem axios)
+    page1.on('response', async res => {
+      try {
+        const url = res.url();
+        if (url.includes('master.m3u8') && !masterContent) {
+          masterContent = await res.text();
+        }
+      } catch {}
     });
 
     // Carregar embed directamente — sem play button, sem Cloudflare
@@ -113,16 +115,21 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     console.log('[scraper] Embed carregado, a aguardar stream...');
 
     const deadline = Date.now() + 15000;
-    while (!streamUrl && Date.now() < deadline) {
+    while (!masterUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
     await page1.close();
     page1 = null;
 
-    if (!streamUrl) { console.log('[scraper] Stream não capturado'); return null; }
+    if (!masterUrl) { console.log('[scraper] Stream não capturado'); return null; }
 
-    console.log('[scraper] Stream capturado:', streamUrl.substring(0, 80));
-    const bestUrl = await getBestQuality(streamUrl, playerUrl);
+    console.log('[scraper] Stream capturado:', masterUrl.substring(0, 80));
+
+    // Parsear a partir do conteúdo já interceptado (sem pedido HTTP extra)
+    const bestUrl = masterContent
+      ? parseBestQuality(masterContent, masterUrl)
+      : masterUrl;
+
     return { url: bestUrl, type: 'direct' };
 
   } catch (err) {
