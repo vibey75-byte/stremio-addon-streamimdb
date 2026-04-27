@@ -3,8 +3,6 @@ const axios = require('axios');
 const fs = require('fs');
 
 const EMBED_BASE = 'https://streamimdb.me/embed';
-const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 10000;
 
 function getBrowserPath() {
   const paths = [
@@ -37,14 +35,21 @@ async function getBestQuality(masterUrl) {
     }
     if (best) { console.log(`[scraper] Qualidade: ${Math.round(bestBandwidth / 1000)}kbps`); return best; }
   } catch (e) {
-    console.log('[scraper] Fallback para master.m3u8:', e.message);
+    console.log('[scraper] Fallback master.m3u8:', e.message);
   }
   return masterUrl;
 }
 
-// Uma tentativa isolada de scraping com browser próprio
-async function singleAttempt(embedUrl, attempt) {
-  console.log(`[scraper] Tentativa ${attempt}/${MAX_ATTEMPTS}: ${embedUrl}`);
+async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
+  if (!imdbId || !imdbId.startsWith('tt')) {
+    throw new Error(`ID IMDb inválido: ${imdbId}`);
+  }
+
+  const embedUrl = type === 'series'
+    ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
+    : `${EMBED_BASE}/${imdbId}/`;
+
+  console.log('[scraper] A tentar:', embedUrl);
   let browser;
 
   try {
@@ -70,10 +75,8 @@ async function singleAttempt(embedUrl, attempt) {
     await new Promise(r => setTimeout(r, 5000));
     await page1.close();
 
-    if (!cloudnestraUrl) {
-      console.log('[scraper] Cloudnestra URL não encontrado');
-      return null;
-    }
+    if (!cloudnestraUrl) { console.log('[scraper] Cloudnestra não encontrado'); return null; }
+    console.log('[scraper] Cloudnestra encontrado');
 
     // Passo 2: clicar play e capturar .m3u8
     const page2 = await browser.newPage();
@@ -94,52 +97,26 @@ async function singleAttempt(embedUrl, attempt) {
     await page2.goto(cloudnestraUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 2000));
     await page2.click('#pl_but').catch(() => {});
-    console.log('[scraper] Play clicado, a aguardar stream...');
+    console.log('[scraper] Play clicado...');
 
     const deadline = Date.now() + 15000;
     while (!streamUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
-
     await page2.close();
-    return streamUrl || null;
+
+    if (!streamUrl) { console.log('[scraper] Stream não capturado'); return null; }
+
+    console.log('[scraper] Stream capturado:', streamUrl.substring(0, 80));
+    const bestUrl = await getBestQuality(streamUrl);
+    return { url: bestUrl, type: 'direct' };
 
   } catch (err) {
-    console.error(`[scraper] Erro na tentativa ${attempt}:`, err.message);
+    console.error('[scraper] Erro:', err.message);
     return null;
   } finally {
     if (browser) await browser.close().catch(() => {});
   }
-}
-
-async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
-  if (!imdbId || !imdbId.startsWith('tt')) {
-    throw new Error(`ID IMDb inválido: ${imdbId}`);
-  }
-
-  const embedUrl = type === 'series'
-    ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
-    : `${EMBED_BASE}/${imdbId}/`;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (attempt > 1) {
-      console.log(`[scraper] A aguardar ${RETRY_DELAY_MS / 1000}s antes de retry...`);
-      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-    }
-
-    const streamUrl = await singleAttempt(embedUrl, attempt);
-
-    if (streamUrl) {
-      console.log('[scraper] Stream capturado:', streamUrl.substring(0, 80));
-      const bestUrl = await getBestQuality(streamUrl);
-      return { url: bestUrl, type: 'direct' };
-    }
-
-    console.log(`[scraper] Tentativa ${attempt} falhou`);
-  }
-
-  console.log('[scraper] Todas as tentativas falharam');
-  return null;
 }
 
 module.exports = { fetchVideoSource };
