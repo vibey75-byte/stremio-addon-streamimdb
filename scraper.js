@@ -89,25 +89,27 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     await page1.setRequestInterception(true);
 
     let masterUrl = null;
-    let masterContent = null;
+    const allM3u8 = []; // todos os .m3u8 capturados
+    let masterContentResolve;
+    const masterContentPromise = new Promise(r => { masterContentResolve = r; });
 
     page1.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8')) {
-        if (!masterUrl) masterUrl = url;
-        else if (!masterUrl.includes('master') && url.includes('master')) masterUrl = url;
+        allM3u8.push(url);
+        if (!masterUrl || (!masterUrl.includes('master') && url.includes('master'))) masterUrl = url;
       }
       req.continue();
     });
 
-    // Interceptar resposta do master.m3u8 directamente no browser (sem axios)
+    // Interceptar resposta do master.m3u8 com Promise para garantir leitura completa
     page1.on('response', async res => {
       try {
-        const url = res.url();
-        if (url.includes('master.m3u8') && !masterContent) {
-          masterContent = await res.text();
+        if (res.url().includes('master.m3u8')) {
+          const text = await res.text();
+          masterContentResolve(text);
         }
-      } catch {}
+      } catch { masterContentResolve(null); }
     });
 
     // Carregar embed directamente — sem play button, sem Cloudflare
@@ -118,14 +120,21 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     while (!masterUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
+
+    // Aguardar conteúdo do master.m3u8 (máx 3s extra)
+    const masterContent = await Promise.race([
+      masterContentPromise,
+      new Promise(r => setTimeout(() => r(null), 3000))
+    ]);
+
     await page1.close();
     page1 = null;
 
     if (!masterUrl) { console.log('[scraper] Stream não capturado'); return null; }
 
     console.log('[scraper] Stream capturado:', masterUrl.substring(0, 80));
+    console.log('[scraper] Master content:', masterContent ? `${masterContent.length} bytes` : 'não capturado');
 
-    // Parsear a partir do conteúdo já interceptado (sem pedido HTTP extra)
     const bestUrl = masterContent
       ? parseBestQuality(masterContent, masterUrl)
       : masterUrl;
