@@ -1,5 +1,5 @@
 const { addonBuilder } = require('stremio-addon-sdk');
-const { fetchVideoSource } = require('./scraper');
+const { fetchVideoSource, preFetchEpisode } = require('./scraper');
 
 const manifest = {
   id: 'org.local.streamimdb',
@@ -35,6 +35,11 @@ builder.defineStreamHandler(async (args) => {
     }
 
     if (result && result.type === 'direct') {
+      // Pre-fetch do próximo episódio quando o browser já estiver livre
+      if (type === 'series' && season && episode) {
+        const nextEp = String(parseInt(episode) + 1);
+        preFetchEpisode(imdbId, 'series', season, nextEp).catch(() => {});
+      }
       return {
         streams: [{
           url: result.url,

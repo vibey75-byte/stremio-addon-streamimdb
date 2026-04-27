@@ -6,6 +6,7 @@ const EMBED_BASE = 'https://streamimdb.me/embed';
 const CACHE_TTL = 2 * 60 * 60 * 1000; // 2 horas
 
 const cache = new Map();
+let browserActive = false; // controlo de concorrência
 
 function cacheKey(imdbId, type, season, episode) {
   return `${imdbId}:${type}:${season}:${episode}`;
@@ -74,6 +75,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   console.log('[scraper] Embed URL:', embedUrl);
   let browser;
 
+  browserActive = true;
   try {
     browser = await puppeteer.launch({
       headless: true,
@@ -133,7 +135,24 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     return null;
   } finally {
     if (browser) await browser.close().catch(() => {});
+    browserActive = false;
   }
 }
 
-module.exports = { fetchVideoSource };
+async function preFetchEpisode(imdbId, type, season, episode) {
+  const key = cacheKey(imdbId, type, season, episode);
+  if (getCached(key)) return;
+
+  // Aguardar até o browser estar livre, com timeout de 10 minutos
+  const timeout = Date.now() + 10 * 60 * 1000;
+  while (browserActive && Date.now() < timeout) {
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  if (browserActive) return; // desistir se passou o timeout
+
+  console.log(`[cache] A iniciar pre-fetch S${season}E${episode}...`);
+  const result = await fetchVideoSource(imdbId, type, season, episode).catch(() => null);
+  if (result) console.log(`[cache] Pre-fetch S${season}E${episode} concluído ✅`);
+}
+
+module.exports = { fetchVideoSource, preFetchEpisode };
