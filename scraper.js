@@ -89,27 +89,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     await page1.setRequestInterception(true);
 
     let masterUrl = null;
-    const allM3u8 = []; // todos os .m3u8 capturados
-    let masterContentResolve;
-    const masterContentPromise = new Promise(r => { masterContentResolve = r; });
 
     page1.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8')) {
-        allM3u8.push(url);
         if (!masterUrl || (!masterUrl.includes('master') && url.includes('master'))) masterUrl = url;
       }
       req.continue();
-    });
-
-    // Interceptar resposta do master.m3u8 com Promise para garantir leitura completa
-    page1.on('response', async res => {
-      try {
-        if (res.url().includes('master.m3u8')) {
-          const text = await res.text();
-          masterContentResolve(text);
-        }
-      } catch { masterContentResolve(null); }
     });
 
     await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
@@ -122,18 +108,21 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       await new Promise(r => setTimeout(r, 500));
     }
 
-    // Aguardar conteúdo do master.m3u8 (máx 3s extra)
-    const masterContent = await Promise.race([
-      masterContentPromise,
-      new Promise(r => setTimeout(() => r(null), 3000))
-    ]);
+    if (!masterUrl) { await page1.close(); page1 = null; console.log('[scraper] Stream não capturado'); return null; }
+
+    console.log('[scraper] Stream capturado:', masterUrl.substring(0, 80));
+
+    // Fetch do master.m3u8 dentro do browser (sem CORS, sem IP block)
+    const masterContent = await page1.evaluate(async (url) => {
+      try {
+        const res = await fetch(url);
+        return await res.text();
+      } catch { return null; }
+    }, masterUrl).catch(() => null);
 
     await page1.close();
     page1 = null;
 
-    if (!masterUrl) { console.log('[scraper] Stream não capturado'); return null; }
-
-    console.log('[scraper] Stream capturado:', masterUrl.substring(0, 80));
     console.log('[scraper] Master content:', masterContent ? `${masterContent.length} bytes` : 'não capturado');
 
     const bestUrl = masterContent
