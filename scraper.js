@@ -4,12 +4,18 @@ const fs = require('fs');
 
 function getBrowserPath() {
   const paths = [
+    // Linux (Render)
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    // Windows (local)
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
   ];
-  return paths.find(p => fs.existsSync(p)) || undefined;
+  return paths.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || undefined;
 }
 
 function buildPlayerUrl(imdbId, type, season, episode) {
