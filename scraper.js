@@ -25,18 +25,15 @@ function buildPlayerUrl(imdbId, type, season, episode) {
   return `https://player.mov2day.xyz/movie/${imdbId}`;
 }
 
-async function getBestQuality(masterUrl) {
+async function getBestQuality(masterUrl, referer = 'https://player.mov2day.xyz/') {
   try {
-    // Extrair o origin do masterUrl para usar como Referer
-    const origin = new URL(masterUrl).origin;
     const res = await axios.get(masterUrl, {
       timeout: 8000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer': 'https://brightpathsignals.com/',
-        'Origin': 'https://brightpathsignals.com',
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Referer': referer,
+        'Origin': new URL(referer).origin,
+        'Accept': '*/*'
       }
     });
     const lines = res.data.split('\n');
@@ -126,7 +123,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     if (!streamUrl) { console.log('[scraper] Stream não capturado'); return null; }
 
     console.log('[scraper] Stream capturado:', streamUrl.substring(0, 80));
-    const bestUrl = await getBestQuality(streamUrl);
+    const bestUrl = await getBestQuality(streamUrl, playerUrl);
     return { url: bestUrl, type: 'direct' };
 
   } catch (err) {
