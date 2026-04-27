@@ -48,7 +48,7 @@ builder.defineStreamHandler(async (args) => {
       streams: [{
         externalUrl: fallbackUrl,
         name: 'StreamIMDb',
-        title: 'Abrir no browser'
+        title: 'No stream available'
       }]
     };
   } catch (err) {

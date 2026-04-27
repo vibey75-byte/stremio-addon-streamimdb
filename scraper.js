@@ -71,8 +71,14 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   if (scraping) {
     console.log('[scraper] A aguardar scrape em curso...');
-    const limit = Date.now() + 60000;
-    while (scraping && Date.now() < limit) await new Promise(r => setTimeout(r, 1000));
+    const limit = Date.now() + 25000; // max 25s — dentro do timeout do Stremio
+    while (scraping && Date.now() < limit) await new Promise(r => setTimeout(r, 500));
+    if (scraping) {
+      // Scrape anterior preso — forçar reset
+      console.log('[scraper] Timeout de espera — a forçar reset do browser');
+      scraping = false;
+      browser = null;
+    }
   }
 
   scraping = true;
