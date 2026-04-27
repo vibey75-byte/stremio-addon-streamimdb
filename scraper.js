@@ -153,13 +153,18 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   pending.set(key, scrapePromise);
   const url = await scrapePromise;
 
-  // 4. Pre-fetch do próximo episódio (só após scrape principal, nunca em cadeia)
+  // 4. Pre-fetch do próximo episódio — com delay para não triggerar rate-limiting do Cloudflare
   if (url && type === 'series' && !isPrefetch) {
     const nextEp = String(parseInt(episode) + 1);
     const nextKey = cacheKey(imdbId, type, season, nextEp);
     if (!getCached(nextKey) && !pending.has(nextKey)) {
-      console.log(`[cache] Pre-fetch S${season}E${nextEp} em background...`);
-      fetchVideoSource(imdbId, 'series', season, nextEp, true).catch(() => {});
+      console.log(`[cache] Pre-fetch S${season}E${nextEp} em 45s...`);
+      setTimeout(() => {
+        if (!getCached(nextKey) && !pending.has(nextKey)) {
+          console.log(`[cache] A iniciar pre-fetch S${season}E${nextEp}...`);
+          fetchVideoSource(imdbId, 'series', season, nextEp, true).catch(() => {});
+        }
+      }, 45000);
     }
   }
 
