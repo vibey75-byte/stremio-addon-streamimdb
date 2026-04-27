@@ -105,15 +105,25 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     page1.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8')) {
+        console.log('[scraper] m3u8 detectado:', url.substring(0, 100));
         if (!streamUrl) streamUrl = url;
         else if (!streamUrl.includes('master') && url.includes('master')) streamUrl = url;
       }
       req.continue();
     });
 
-    await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
+    await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(e => console.log('[scraper] goto erro:', e.message));
     await new Promise(r => setTimeout(r, 2000));
-    await page1.click('#play-btn').catch(() => {});
+
+    // Verificar se a página carregou correctamente
+    const pageInfo = await page1.evaluate(() => ({
+      title: document.title,
+      hasPlayBtn: !!document.querySelector('#play-btn'),
+      bodySnippet: document.body?.innerHTML?.substring(0, 200)
+    })).catch(() => ({}));
+    console.log('[scraper] Página:', JSON.stringify(pageInfo));
+
+    await page1.click('#play-btn').catch(e => console.log('[scraper] click erro:', e.message));
     console.log('[scraper] Play clicado...');
 
     const deadline = Date.now() + 15000;
