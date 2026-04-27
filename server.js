@@ -1,7 +1,15 @@
-const { serveHTTP } = require('stremio-addon-sdk');
+const express = require('express');
+const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 
-const landingHTML = `<!DOCTYPE html>
+const PORT = process.env.PORT || 7000;
+const app = express();
+
+app.use(getRouter(addonInterface));
+
+app.get('/', (req, res) => {
+  res.setHeader('content-type', 'text/html');
+  res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -52,22 +60,17 @@ const landingHTML = `<!DOCTYPE html>
     <h1>StreamIMDb Connector</h1>
     <div class="version">v1.1.0 &nbsp;·&nbsp; Movies &amp; Series</div>
     <p>Stream movies and series natively inside Stremio — no browser required.</p>
-
     <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
     <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
-
     <hr class="divider">
-
     <div class="label">Report an issue</div>
     <textarea id="msg" placeholder="Describe the issue (e.g. movie title, what happened)..."></textarea>
     <a id="report-btn" class="btn btn-report" href="#">&#9993; Send Report</a>
   </div>
-
   <div class="footer">
     <a href="/manifest.json">manifest.json</a> &nbsp;·&nbsp;
     <a href="https://github.com/F100Pilot/stremio-addon-streamimdb" target="_blank">GitHub</a>
   </div>
-
   <script>
     document.getElementById('install-btn').href = 'stremio://' + window.location.host + '/manifest.json';
     document.getElementById('report-btn').addEventListener('click', function(e) {
@@ -78,9 +81,10 @@ const landingHTML = `<!DOCTYPE html>
     });
   </script>
 </body>
-</html>`;
+</html>`);
+});
 
-const PORT = process.env.PORT || 7000;
-serveHTTP(addonInterface, { port: PORT, landingHTML });
-
-console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
+app.listen(PORT, () => {
+  console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
+  console.log(`HTTP addon accessible at: http://127.0.0.1:${PORT}/manifest.json`);
+});
