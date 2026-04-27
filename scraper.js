@@ -3,6 +3,29 @@ const axios = require('axios');
 const fs = require('fs');
 
 const EMBED_BASE = 'https://streamimdb.me/embed';
+const CACHE_TTL = 2 * 60 * 60 * 1000; // 2 horas
+
+// Cache em memória: chave → { url, timestamp }
+const cache = new Map();
+
+function cacheKey(imdbId, type, season, episode) {
+  return `${imdbId}:${type}:${season}:${episode}`;
+}
+
+function getCached(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.url;
+}
+
+function setCached(key, url) {
+  cache.set(key, { url, timestamp: Date.now() });
+  console.log(`[cache] Guardado: ${key}`);
+}
 
 function getBrowserPath() {
   const paths = [
@@ -14,7 +37,6 @@ function getBrowserPath() {
   return paths.find(p => fs.existsSync(p)) || undefined;
 }
 
-// Parsear master.m3u8 e devolver o URL da stream com maior BANDWIDTH
 async function getHighestQualityStream(masterUrl) {
   try {
     const res = await axios.get(masterUrl, {
@@ -32,7 +54,6 @@ async function getHighestQualityStream(masterUrl) {
         const streamLine = lines[i + 1]?.trim();
         if (streamLine && bandwidth >= bestBandwidth) {
           bestBandwidth = bandwidth;
-          // Resolver URL relativo se necessário
           best = streamLine.startsWith('http')
             ? streamLine
             : new URL(streamLine, masterUrl).href;
@@ -41,23 +62,34 @@ async function getHighestQualityStream(masterUrl) {
     }
 
     if (best) {
-      console.log(`[scraper] Melhor qualidade: ${bestBandwidth / 1000}kbps → ${best.substring(0, 80)}`);
+      console.log(`[scraper] Melhor qualidade: ${Math.round(bestBandwidth / 1000)}kbps`);
       return best;
     }
   } catch (err) {
     console.log('[scraper] Erro ao parsear master.m3u8:', err.message);
   }
-  return masterUrl; // fallback: devolver o master se falhar
+  return masterUrl;
 }
 
-async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
+// isPrefetch=true evita que pre-fetches disparem novos pre-fetches (efeito cascata)
+async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null, isPrefetch = false) {
   if (!imdbId || !imdbId.startsWith('tt')) {
     throw new Error(`ID IMDb inválido: ${imdbId}`);
+  }
+
+  // Verificar cache primeiro
+  const key = cacheKey(imdbId, type, season, episode);
+  const cached = getCached(key);
+  if (cached) {
+    console.log(`[cache] Hit! ${key} → resposta instantânea`);
+    return { url: cached, type: 'direct' };
   }
 
   const embedUrl = type === 'series'
     ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
     : `${EMBED_BASE}/${imdbId}/`;
+
+  console.log('[scraper] Embed URL:', embedUrl);
 
   let browser;
 
@@ -124,8 +156,19 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
     console.log('[scraper] Master URL capturado:', masterUrl.substring(0, 80));
 
-    // Passo 3: parsear o master.m3u8 e obter a qualidade mais alta
+    // Passo 3: obter qualidade mais alta
     const bestUrl = await getHighestQualityStream(masterUrl);
+
+    // Guardar na cache
+    setCached(key, bestUrl);
+
+    // Pre-fetch do próximo episódio em background (só se não for já um pre-fetch)
+    if (type === 'series' && !isPrefetch) {
+      const nextEp = parseInt(episode) + 1;
+      console.log(`[cache] A pre-fetch episódio ${season}-${nextEp} em background...`);
+      fetchVideoSource(imdbId, 'series', season, String(nextEp), true).catch(() => {});
+    }
+
     return { url: bestUrl, type: 'direct' };
 
   } catch (err) {
