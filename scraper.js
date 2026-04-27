@@ -14,6 +14,32 @@ function getBrowserPath() {
   return paths.find(p => fs.existsSync(p)) || undefined;
 }
 
+// Browser persistente — lançado uma vez, reutilizado em todos os pedidos
+let browser = null;
+let scraping = false;
+
+async function getBrowser() {
+  if (browser) {
+    try {
+      await browser.pages(); // verifica se ainda está vivo
+      return browser;
+    } catch {
+      browser = null;
+    }
+  }
+  console.log('[browser] A lançar browser...');
+  browser = await puppeteer.launch({
+    headless: true,
+    executablePath: getBrowserPath(),
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
+  });
+  console.log('[browser] Pronto');
+  return browser;
+}
+
+// Inicializar browser ao arrancar o servidor
+getBrowser().catch(err => console.error('[browser] Erro no arranque:', err.message));
+
 async function getBestQuality(masterUrl) {
   try {
     const res = await axios.get(masterUrl, {
@@ -45,22 +71,28 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     throw new Error(`ID IMDb inválido: ${imdbId}`);
   }
 
+  // Evitar scrapes simultâneos
+  if (scraping) {
+    console.log('[scraper] Scrape em progresso, a aguardar...');
+    const waitUntil = Date.now() + 60000;
+    while (scraping && Date.now() < waitUntil) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  scraping = true;
   const embedUrl = type === 'series'
     ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
     : `${EMBED_BASE}/${imdbId}/`;
 
   console.log('[scraper] A tentar:', embedUrl);
-  let browser;
+  let page1, page2;
 
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: getBrowserPath(),
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
-    });
+    const b = await getBrowser();
 
     // Passo 1: capturar URL do Cloudnestra
-    const page1 = await browser.newPage();
+    page1 = await b.newPage();
     await page1.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     await page1.setRequestInterception(true);
 
@@ -74,12 +106,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     await page1.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 5000));
     await page1.close();
+    page1 = null;
 
     if (!cloudnestraUrl) { console.log('[scraper] Cloudnestra não encontrado'); return null; }
     console.log('[scraper] Cloudnestra encontrado');
 
     // Passo 2: clicar play e capturar .m3u8
-    const page2 = await browser.newPage();
+    page2 = await b.newPage();
     await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     await page2.setExtraHTTPHeaders({ 'Referer': 'https://streamimdb.me/' });
     await page2.setRequestInterception(true);
@@ -104,6 +137,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       await new Promise(r => setTimeout(r, 500));
     }
     await page2.close();
+    page2 = null;
 
     if (!streamUrl) { console.log('[scraper] Stream não capturado'); return null; }
 
@@ -113,9 +147,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   } catch (err) {
     console.error('[scraper] Erro:', err.message);
+    // Se o browser crashou, forçar recriação
+    browser = null;
     return null;
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    if (page1) await page1.close().catch(() => {});
+    if (page2) await page2.close().catch(() => {});
+    scraping = false;
   }
 }
 
