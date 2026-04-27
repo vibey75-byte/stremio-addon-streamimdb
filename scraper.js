@@ -19,9 +19,9 @@ function getBrowserPath() {
 
 function buildEmbedUrl(imdbId, type, season, episode) {
   if (type === 'series') {
-    return `https://cdn.mov2day.xyz/embed/tv/${imdbId}/${season}/${episode}`;
+    return `https://player.mov2day.xyz/tv/${imdbId}/${season}/${episode}`;
   }
-  return `https://cdn.mov2day.xyz/embed/movie/${imdbId}`;
+  return `https://player.mov2day.xyz/movie/${imdbId}`;
 }
 
 function parseBestQuality(content, masterUrl) {
@@ -112,9 +112,10 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       } catch { masterContentResolve(null); }
     });
 
-    // Carregar embed directamente — sem play button, sem Cloudflare
     await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
-    console.log('[scraper] Embed carregado, a aguardar stream...');
+    await new Promise(r => setTimeout(r, 2000));
+    await page1.click('#play-btn').catch(() => {});
+    console.log('[scraper] Play clicado, a aguardar stream...');
 
     const deadline = Date.now() + 15000;
     while (!masterUrl && Date.now() < deadline) {
