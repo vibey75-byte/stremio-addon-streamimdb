@@ -2,11 +2,10 @@ const { addonBuilder } = require('stremio-addon-sdk');
 const { fetchVideoSource } = require('./scraper');
 
 const manifest = {
-  id: 'org.local.streamimdb',
+  id: 'org.local.playimdb',
   version: '1.0.0',
   name: 'StreamIMDb Connector',
-  description: 'Stream movies and series via streamimdb.me natively inside Stremio.',
-  logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
+  description: 'Wrapper para streamimdb.me — abre streams no browser ou tenta extrair link direto.',
   types: ['movie', 'series'],
   catalogs: [],
   resources: ['stream'],
@@ -17,21 +16,16 @@ const builder = new addonBuilder(manifest);
 
 builder.defineStreamHandler(async (args) => {
   try {
-    const parts = args.id.split(':');
-    const imdbId = parts[0];
-    const type = parts.length > 1 ? 'series' : 'movie';
-    const season = parts[1] || null;
-    const episode = parts[2] || null;
+    // Para séries, o id vem como "tt1234567:1:2" — extrair só o IMDb ID
+    const imdbId = args.id.split(':')[0];
 
-    const fallbackUrl = type === 'series'
-      ? `https://streamimdb.me/embed/${imdbId}/${season}-${episode}/`
-      : `https://streamimdb.me/embed/${imdbId}/`;
+    const fallbackUrl = `https://streamimdb.me/embed/${imdbId}/`;
 
     let result = null;
     try {
-      result = await fetchVideoSource(imdbId, type, season, episode);
+      result = await fetchVideoSource(imdbId);
     } catch (scraperErr) {
-      console.error(`[handler] Erro no scraper: ${scraperErr.message}`);
+      console.error(`[scraper] Erro ao extrair fonte: ${scraperErr.message}`);
     }
 
     if (result && result.type === 'direct') {
@@ -44,10 +38,12 @@ builder.defineStreamHandler(async (args) => {
       };
     }
 
+    // iframe ou fallback — abrir no browser
+    const externalUrl = (result && result.url) ? result.url : fallbackUrl;
     return {
       streams: [{
-        externalUrl: fallbackUrl,
-        name: 'StreamIMDb',
+        externalUrl,
+        name: 'PlayIMDb',
         title: 'Abrir no browser'
       }]
     };
