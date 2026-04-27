@@ -1,12 +1,9 @@
-const express = require('express');
-const { getRouter } = require('stremio-addon-sdk');
+const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 
-const app = express();
 const PORT = process.env.PORT || 7000;
 
-function getLandingHTML(installUrl) {
-  return `<!DOCTYPE html>
+const landingHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -34,12 +31,7 @@ function getLandingHTML(installUrl) {
       width: 100%;
       box-shadow: 0 8px 40px rgba(0,0,0,0.4);
     }
-    .logo {
-      width: 72px;
-      height: 72px;
-      border-radius: 16px;
-      margin-bottom: 20px;
-    }
+    .logo { width: 72px; height: 72px; border-radius: 16px; margin-bottom: 20px; }
     h1 { font-size: 1.6rem; font-weight: 700; color: #fff; margin-bottom: 6px; }
     .version { font-size: 0.8rem; color: #666; margin-bottom: 12px; }
     p { color: #999; font-size: 0.95rem; line-height: 1.5; margin-bottom: 28px; }
@@ -62,11 +54,7 @@ function getLandingHTML(installUrl) {
     .btn:hover { opacity: 0.85; }
     .btn-install { background: #7b3fe4; color: #fff; }
     .btn-donate { background: #003087; color: #fff; }
-    .divider {
-      border: none;
-      border-top: 1px solid #2a2a3a;
-      margin: 24px 0;
-    }
+    .divider { border: none; border-top: 1px solid #2a2a3a; margin: 24px 0; }
     .report-title { font-size: 0.9rem; font-weight: 600; color: #ccc; margin-bottom: 12px; }
     textarea {
       width: 100%;
@@ -92,23 +80,16 @@ function getLandingHTML(installUrl) {
     <img class="logo" src="https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png" alt="icon">
     <h1>StreamIMDb Connector</h1>
     <div class="version">v1.1.0 &nbsp;·&nbsp; Movies &amp; Series</div>
-    <p>Stream movies and series natively inside Stremio via streamimdb.me — no browser required.</p>
+    <p>Stream movies and series natively inside Stremio — no browser required.</p>
 
-    <a class="btn btn-install" href="${installUrl}">
-      ▶ Install in Stremio
-    </a>
-
-    <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">
-      ♥ Donate via PayPal
-    </a>
+    <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
+    <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
 
     <hr class="divider">
 
     <div class="report-title">Report an issue</div>
     <textarea id="msg" placeholder="Describe the issue (e.g. movie title, what happened)..."></textarea>
-    <a id="report-btn" class="btn btn-report" href="#">
-      ✉ Send Report
-    </a>
+    <a id="report-btn" class="btn btn-report" href="#">&#9993; Send Report</a>
   </div>
 
   <div class="footer">
@@ -118,36 +99,19 @@ function getLandingHTML(installUrl) {
   </div>
 
   <script>
-    // Update install link with current host
-    const manifest = window.location.origin + '/manifest.json';
-    const installBtn = document.querySelector('.btn-install');
-    if (installBtn) installBtn.href = 'stremio://' + window.location.host + '/manifest.json';
-  </script>
-  <script>
+    const host = window.location.host;
+    document.getElementById('install-btn').href = 'stremio://' + host + '/manifest.json';
+
     document.getElementById('report-btn').addEventListener('click', function(e) {
       e.preventDefault();
       const msg = document.getElementById('msg').value.trim();
       if (!msg) { alert('Please describe the issue first.'); return; }
-      const subject = encodeURIComponent('StreamIMDb Addon Report');
-      const body = encodeURIComponent(msg);
-      window.location.href = 'mailto:pflm.bet@gmail.com?subject=' + subject + '&body=' + body;
+      window.location.href = 'mailto:pflm.bet@gmail.com?subject=' + encodeURIComponent('StreamIMDb Report') + '&body=' + encodeURIComponent(msg);
     });
   </script>
 </body>
-</html>`;}
+</html>`;
 
-// Landing page — URL dinâmico baseado no host
-app.get('/', (req, res) => {
-  const proto = req.headers['x-forwarded-proto'] || 'http';
-  const host = req.headers.host;
-  const installUrl = `stremio://${host}/manifest.json`;
-  res.send(getLandingHTML(installUrl));
-});
+serveHTTP(addonInterface, { port: PORT, landingHTML });
 
-// Addon routes (manifest, streams, etc.)
-app.use(getRouter(addonInterface));
-
-app.listen(PORT, () => {
-  console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
-  console.log(`Landing page em http://localhost:${PORT}`);
-});
+console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
