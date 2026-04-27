@@ -27,9 +27,17 @@ function buildPlayerUrl(imdbId, type, season, episode) {
 
 async function getBestQuality(masterUrl) {
   try {
+    // Extrair o origin do masterUrl para usar como Referer
+    const origin = new URL(masterUrl).origin;
     const res = await axios.get(masterUrl, {
       timeout: 8000,
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://player.mov2day.xyz/' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': 'https://brightpathsignals.com/',
+        'Origin': 'https://brightpathsignals.com',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
     });
     const lines = res.data.split('\n');
     let best = null;
