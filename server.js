@@ -80,6 +80,7 @@ const landingHTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-serveHTTP(addonInterface, { port: process.env.PORT || 7000, landingHTML });
+const PORT = process.env.PORT || 7000;
+serveHTTP(addonInterface, { port: PORT, landingHTML });
 
-console.log('Add-on disponível em http://localhost:7000/manifest.json');
+console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
