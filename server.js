@@ -5,10 +5,8 @@ const addonInterface = require('./addon');
 const app = express();
 const PORT = process.env.PORT || 7000;
 
-const MANIFEST_URL = `https://stremio-addon-streamimdb.onrender.com/manifest.json`;
-const STREMIO_INSTALL_URL = `stremio://${MANIFEST_URL.replace('https://', '')}`;
-
-const landingHTML = `<!DOCTYPE html>
+function getLandingHTML(installUrl) {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -96,7 +94,7 @@ const landingHTML = `<!DOCTYPE html>
     <div class="version">v1.1.0 &nbsp;·&nbsp; Movies &amp; Series</div>
     <p>Stream movies and series natively inside Stremio via streamimdb.me — no browser required.</p>
 
-    <a class="btn btn-install" href="${STREMIO_INSTALL_URL}">
+    <a class="btn btn-install" href="${installUrl}">
       ▶ Install in Stremio
     </a>
 
@@ -120,6 +118,12 @@ const landingHTML = `<!DOCTYPE html>
   </div>
 
   <script>
+    // Update install link with current host
+    const manifest = window.location.origin + '/manifest.json';
+    const installBtn = document.querySelector('.btn-install');
+    if (installBtn) installBtn.href = 'stremio://' + window.location.host + '/manifest.json';
+  </script>
+  <script>
     document.getElementById('report-btn').addEventListener('click', function(e) {
       e.preventDefault();
       const msg = document.getElementById('msg').value.trim();
@@ -130,10 +134,15 @@ const landingHTML = `<!DOCTYPE html>
     });
   </script>
 </body>
-</html>`;
+</html>`;}
 
-// Landing page
-app.get('/', (req, res) => res.send(landingHTML));
+// Landing page — URL dinâmico baseado no host
+app.get('/', (req, res) => {
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers.host;
+  const installUrl = `stremio://${host}/manifest.json`;
+  res.send(getLandingHTML(installUrl));
+});
 
 // Addon routes (manifest, streams, etc.)
 app.use(getRouter(addonInterface));
