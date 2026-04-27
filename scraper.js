@@ -13,10 +13,14 @@ function getBrowserPath() {
   return paths.find(p => fs.existsSync(p)) || undefined;
 }
 
-async function fetchVideoSource(imdbId) {
+async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
   if (!imdbId || !imdbId.startsWith('tt')) {
     throw new Error(`ID IMDb inválido: ${imdbId}`);
   }
+
+  const embedUrl = type === 'series'
+    ? `${EMBED_BASE}/${imdbId}/${season}/${episode}/`
+    : `${EMBED_BASE}/${imdbId}/`;
 
   let browser;
 
@@ -41,7 +45,7 @@ async function fetchVideoSource(imdbId) {
       req.continue();
     });
 
-    await page1.goto(`${EMBED_BASE}/${imdbId}/`, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    await page1.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 5000));
     await page1.close();
 
