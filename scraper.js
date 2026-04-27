@@ -19,8 +19,10 @@ function getBrowserPath() {
 
 function buildEmbedUrl(imdbId, type, season, episode) {
   if (type === 'series') {
-    return `https://player.mov2day.xyz/tv/${imdbId}/${season}/${episode}`;
+    // cdn.mov2day.xyz lida correctamente com IMDb IDs para séries
+    return `https://cdn.mov2day.xyz/embed/tv/${imdbId}/${season}/${episode}`;
   }
+  // player.mov2day.xyz funciona bem para filmes em qualquer IP
   return `https://player.mov2day.xyz/movie/${imdbId}`;
 }
 
@@ -114,8 +116,12 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
     await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 2000));
-    await page1.click('#play-btn').catch(() => {});
-    console.log('[scraper] Play clicado, a aguardar stream...');
+    if (type === 'movie') {
+      await page1.click('#play-btn').catch(() => {});
+      console.log('[scraper] Play clicado, a aguardar stream...');
+    } else {
+      console.log('[scraper] Série carregada, a aguardar stream...');
+    }
 
     const deadline = Date.now() + 15000;
     while (!masterUrl && Date.now() < deadline) {
