@@ -2,8 +2,6 @@ const puppeteer = require('puppeteer');
 const axios = require('axios');
 const fs = require('fs');
 
-const EMBED_BASE = 'https://streamimdb.me/embed';
-
 function getBrowserPath() {
   const paths = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -14,37 +12,18 @@ function getBrowserPath() {
   return paths.find(p => fs.existsSync(p)) || undefined;
 }
 
-// Browser persistente — lançado uma vez, reutilizado em todos os pedidos
-let browser = null;
-let scraping = false;
-
-async function getBrowser() {
-  if (browser) {
-    try {
-      await browser.pages(); // verifica se ainda está vivo
-      return browser;
-    } catch {
-      browser = null;
-    }
+function buildPlayerUrl(imdbId, type, season, episode) {
+  if (type === 'series') {
+    return `https://player.mov2day.xyz/tv/${imdbId}/${season}/${episode}`;
   }
-  console.log('[browser] A lançar browser...');
-  browser = await puppeteer.launch({
-    headless: true,
-    executablePath: getBrowserPath(),
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
-  });
-  console.log('[browser] Pronto');
-  return browser;
+  return `https://player.mov2day.xyz/movie/${imdbId}`;
 }
-
-// Inicializar browser ao arrancar o servidor
-getBrowser().catch(err => console.error('[browser] Erro no arranque:', err.message));
 
 async function getBestQuality(masterUrl) {
   try {
     const res = await axios.get(masterUrl, {
       timeout: 8000,
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://cloudnestra.com/' }
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://player.mov2day.xyz/' }
     });
     const lines = res.data.split('\n');
     let best = null;
@@ -66,59 +45,50 @@ async function getBestQuality(masterUrl) {
   return masterUrl;
 }
 
-async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
-  if (!imdbId || !imdbId.startsWith('tt')) {
-    throw new Error(`ID IMDb inválido: ${imdbId}`);
-  }
+// Browser persistente — sem overhead de arranque em cada pedido
+let browser = null;
+let scraping = false;
 
-  // Evitar scrapes simultâneos
+async function getBrowser() {
+  if (browser) {
+    try { await browser.pages(); return browser; } catch { browser = null; }
+  }
+  console.log('[browser] A lançar...');
+  browser = await puppeteer.launch({
+    headless: true,
+    executablePath: getBrowserPath(),
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
+  });
+  console.log('[browser] Pronto');
+  return browser;
+}
+
+getBrowser().catch(e => console.error('[browser] Erro no arranque:', e.message));
+
+async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
+  if (!imdbId || !imdbId.startsWith('tt')) throw new Error(`ID IMDb inválido: ${imdbId}`);
+
   if (scraping) {
-    console.log('[scraper] Scrape em progresso, a aguardar...');
-    const waitUntil = Date.now() + 60000;
-    while (scraping && Date.now() < waitUntil) {
-      await new Promise(r => setTimeout(r, 1000));
-    }
+    console.log('[scraper] A aguardar scrape em curso...');
+    const limit = Date.now() + 60000;
+    while (scraping && Date.now() < limit) await new Promise(r => setTimeout(r, 1000));
   }
 
   scraping = true;
-  const embedUrl = type === 'series'
-    ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
-    : `${EMBED_BASE}/${imdbId}/`;
+  const playerUrl = buildPlayerUrl(imdbId, type, season, episode);
+  console.log('[scraper] A tentar:', playerUrl);
 
-  console.log('[scraper] A tentar:', embedUrl);
   let page1, page2;
-
   try {
     const b = await getBrowser();
 
-    // Passo 1: capturar URL do Cloudnestra
+    // Carregar o player e clicar play
     page1 = await b.newPage();
     await page1.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     await page1.setRequestInterception(true);
 
-    let cloudnestraUrl = null;
-    page1.on('request', req => {
-      const url = req.url();
-      if (!cloudnestraUrl && url.includes('cloudnestra.com/rcp/')) cloudnestraUrl = url;
-      req.continue();
-    });
-
-    await page1.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 5000));
-    await page1.close();
-    page1 = null;
-
-    if (!cloudnestraUrl) { console.log('[scraper] Cloudnestra não encontrado'); return null; }
-    console.log('[scraper] Cloudnestra encontrado');
-
-    // Passo 2: clicar play e capturar .m3u8
-    page2 = await b.newPage();
-    await page2.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-    await page2.setExtraHTTPHeaders({ 'Referer': 'https://streamimdb.me/' });
-    await page2.setRequestInterception(true);
-
     let streamUrl = null;
-    page2.on('request', req => {
+    page1.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8')) {
         if (!streamUrl) streamUrl = url;
@@ -127,17 +97,17 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       req.continue();
     });
 
-    await page2.goto(cloudnestraUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
+    await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 2000));
-    await page2.click('#pl_but').catch(() => {});
+    await page1.click('#play-btn').catch(() => {});
     console.log('[scraper] Play clicado...');
 
     const deadline = Date.now() + 15000;
     while (!streamUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
-    await page2.close();
-    page2 = null;
+    await page1.close();
+    page1 = null;
 
     if (!streamUrl) { console.log('[scraper] Stream não capturado'); return null; }
 
@@ -147,7 +117,6 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   } catch (err) {
     console.error('[scraper] Erro:', err.message);
-    // Se o browser crashou, forçar recriação
     browser = null;
     return null;
   } finally {
