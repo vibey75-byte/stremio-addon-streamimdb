@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer');
+const axios = require('axios');
 const fs = require('fs');
 
 const EMBED_BASE = 'https://streamimdb.me/embed';
@@ -19,7 +20,7 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   }
 
   const embedUrl = type === 'series'
-    ? `${EMBED_BASE}/${imdbId}/${season}/${episode}/`
+    ? `${EMBED_BASE}/${imdbId}/${season}-${episode}/`
     : `${EMBED_BASE}/${imdbId}/`;
 
   let browser;
@@ -63,9 +64,9 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     let streamUrl = null;
     page2.on('request', req => {
       const url = req.url();
-      // Prioridade: master.m3u8 > index.m3u8 > qualquer .m3u8
-      if (!streamUrl && url.includes('.m3u8')) {
-        streamUrl = url;
+      if (url.includes('.m3u8')) {
+        if (!streamUrl) streamUrl = url;
+        else if (!streamUrl.includes('master') && url.includes('master')) streamUrl = url;
       }
       req.continue();
     });
@@ -86,14 +87,41 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     await page2.close();
 
     if (streamUrl) {
-      console.log('[scraper] Stream capturado:', streamUrl);
-      return { url: streamUrl, type: 'direct' };
+      console.log('[scraper] Stream capturado:', streamUrl.substring(0, 80));
+      const bestUrl = await getBestQuality(streamUrl);
+      return { url: bestUrl, type: 'direct' };
     }
 
     return null;
   } finally {
     if (browser) await browser.close();
   }
+}
+
+async function getBestQuality(masterUrl) {
+  try {
+    const res = await axios.get(masterUrl, {
+      timeout: 8000,
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://cloudnestra.com/' }
+    });
+    const lines = res.data.split('\n');
+    let best = null;
+    let bestBandwidth = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
+        const bw = parseInt((lines[i].match(/BANDWIDTH=(\d+)/) || [])[1] || 0);
+        const src = lines[i + 1]?.trim();
+        if (src && bw >= bestBandwidth) {
+          bestBandwidth = bw;
+          best = src.startsWith('http') ? src : new URL(src, masterUrl).href;
+        }
+      }
+    }
+    if (best) { console.log(`[scraper] Qualidade: ${Math.round(bestBandwidth / 1000)}kbps`); return best; }
+  } catch (e) {
+    console.log('[scraper] Fallback para master.m3u8:', e.message);
+  }
+  return masterUrl;
 }
 
 module.exports = { fetchVideoSource };
