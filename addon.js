@@ -40,6 +40,7 @@ builder.defineStreamHandler(async (args) => {
           url,
           name:  'StreamIMDb',
           title: type === 'series' ? `S${season}E${episode} · ${quality}` : quality,
+          behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         }))
       };
     }
