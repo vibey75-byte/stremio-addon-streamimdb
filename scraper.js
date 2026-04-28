@@ -1,27 +1,45 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
-function getBrowserPath() {
-  const paths = [
-    // Linux (Render)
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    // Windows (local)
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
-  ];
-  return paths.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || undefined;
+// URLs configuráveis via env vars — sem redeploy quando o site muda
+const MOVIE_PLAYER  = process.env.MOVIE_PLAYER_URL  || 'https://player.mov2day.xyz/movie';
+const TV_EMBED      = process.env.TV_EMBED_URL       || 'https://cdn.mov2day.xyz/embed/tv';
+
+const CACHE_TTL     = parseInt(process.env.CACHE_TTL_MS)  || 2 * 60 * 60 * 1000; // 2h
+const MAX_QUEUE     = parseInt(process.env.MAX_QUEUE)      || 3; // máx pedidos únicos em fila
+
+// Cache de resultados: evita rescraping do mesmo conteúdo
+const cache = new Map();
+// Deduplicação: se o mesmo conteúdo está a ser scraped, aguarda o resultado existente
+const pending = new Map();
+
+let activeScrapes = 0;
+
+function cacheKey(imdbId, type, season, episode) {
+  return `${imdbId}:${type}:${season || ''}:${episode || ''}`;
 }
 
-function buildEmbedUrl(imdbId, type, season, episode) {
-  if (type === 'series') {
-    return `https://player.mov2day.xyz/tv/${imdbId}/${season}/${episode}`;
-  }
-  return `https://player.mov2day.xyz/movie/${imdbId}`;
+function getCached(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) { cache.delete(key); return null; }
+  return entry.url;
+}
+
+function setCached(key, url) {
+  cache.set(key, { url, timestamp: Date.now() });
+  console.log(`[cache] Guardado: ${key} (cache size: ${cache.size})`);
+}
+
+function getBrowserPath() {
+  const paths = [
+    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium-browser', '/usr/bin/chromium',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  ];
+  return paths.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || undefined;
 }
 
 function parseBestQuality(content, masterUrl) {
@@ -40,15 +58,12 @@ function parseBestQuality(content, masterUrl) {
       }
     }
     if (best) { console.log(`[scraper] Qualidade: ${Math.round(bestBandwidth / 1000)}kbps`); return best; }
-  } catch (e) {
-    console.log('[scraper] Erro ao parsear qualidade:', e.message);
-  }
+  } catch (e) { console.log('[scraper] Erro ao parsear qualidade:', e.message); }
   return masterUrl;
 }
 
-// Browser persistente — sem overhead de arranque em cada pedido
+// Browser persistente
 let browser = null;
-let scraping = false;
 
 async function getBrowser() {
   if (browser) {
@@ -66,49 +81,33 @@ async function getBrowser() {
 
 getBrowser().catch(e => console.error('[browser] Erro no arranque:', e.message));
 
-async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
-  if (!imdbId || !imdbId.startsWith('tt')) throw new Error(`ID IMDb inválido: ${imdbId}`);
+// Scraping de um único conteúdo (sem cache, sem deduplicação)
+async function doScrape(imdbId, type, season, episode) {
+  const playerUrl = type === 'series'
+    ? `${TV_EMBED}/${imdbId}/${season}/${episode}`
+    : `${MOVIE_PLAYER}/${imdbId}`;
 
-  if (scraping) {
-    console.log('[scraper] A aguardar scrape em curso...');
-    const limit = Date.now() + 25000; // max 25s — dentro do timeout do Stremio
-    while (scraping && Date.now() < limit) await new Promise(r => setTimeout(r, 500));
-    if (scraping) {
-      // Scrape anterior preso — forçar reset
-      console.log('[scraper] Timeout de espera — a forçar reset do browser');
-      scraping = false;
-      browser = null;
-    }
-  }
+  console.log(`[scraper] A tentar (${type}):`, playerUrl);
+  let page1;
 
-  scraping = true;
-  const playerUrl = buildEmbedUrl(imdbId, type, season, episode);
-  console.log('[scraper] A tentar:', playerUrl);
-
-  let page1, page2;
   try {
     const b = await getBrowser();
-
-    // Carregar o player e clicar play
     page1 = await b.newPage();
     await page1.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     await page1.setRequestInterception(true);
 
     let masterUrl = null;
-    const allM3u8 = []; // todos os .m3u8 capturados
     let masterContentResolve;
     const masterContentPromise = new Promise(r => { masterContentResolve = r; });
 
     page1.on('request', req => {
       const url = req.url();
       if (url.includes('.m3u8')) {
-        allM3u8.push(url);
         if (!masterUrl || (!masterUrl.includes('master') && url.includes('master'))) masterUrl = url;
       }
       req.continue();
     });
 
-    // Interceptar resposta do master.m3u8 com Promise para garantir leitura completa
     page1.on('response', async res => {
       try {
         if (res.url().includes('master.m3u8')) {
@@ -120,15 +119,17 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
     await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
     await new Promise(r => setTimeout(r, 2000));
-    await page1.click('#play-btn').catch(() => {});
-    console.log('[scraper] Play clicado, a aguardar stream...');
+
+    if (type === 'movie') {
+      await page1.click('#play-btn').catch(() => {});
+      console.log('[scraper] Play clicado...');
+    }
 
     const deadline = Date.now() + 15000;
     while (!masterUrl && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
 
-    // Aguardar conteúdo do master.m3u8 (máx 3s extra)
     const masterContent = await Promise.race([
       masterContentPromise,
       new Promise(r => setTimeout(() => r(null), 3000))
@@ -138,15 +139,9 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     page1 = null;
 
     if (!masterUrl) { console.log('[scraper] Stream não capturado'); return null; }
-
     console.log('[scraper] Stream capturado:', masterUrl.substring(0, 80));
-    console.log('[scraper] Master content:', masterContent ? `${masterContent.length} bytes` : 'não capturado');
 
-    const bestUrl = masterContent
-      ? parseBestQuality(masterContent, masterUrl)
-      : masterUrl;
-
-    return { url: bestUrl, type: 'direct' };
+    return masterContent ? parseBestQuality(masterContent, masterUrl) : masterUrl;
 
   } catch (err) {
     console.error('[scraper] Erro:', err.message);
@@ -154,9 +149,53 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     return null;
   } finally {
     if (page1) await page1.close().catch(() => {});
-    if (page2) await page2.close().catch(() => {});
-    scraping = false;
+    activeScrapes = Math.max(0, activeScrapes - 1);
   }
+}
+
+async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
+  if (!imdbId || !imdbId.startsWith('tt')) throw new Error(`ID IMDb inválido: ${imdbId}`);
+
+  const key = cacheKey(imdbId, type, season, episode);
+
+  // 1. Cache hit — resposta instantânea
+  const cached = getCached(key);
+  if (cached) {
+    console.log(`[cache] Hit: ${key}`);
+    return { url: cached, type: 'direct' };
+  }
+
+  // 2. Deduplicação — mesmo conteúdo já está a ser scraped
+  if (pending.has(key)) {
+    console.log(`[cache] Dedup: aguardando scrape em curso para ${key}`);
+    const url = await pending.get(key);
+    return url ? { url, type: 'direct' } : null;
+  }
+
+  // 3. Rejeição por sobrecarga — protege o servidor
+  if (activeScrapes >= MAX_QUEUE) {
+    console.log(`[scraper] Sobrecarga (${activeScrapes} scrapes activos) — a rejeitar pedido`);
+    return null;
+  }
+
+  // 4. Iniciar novo scrape
+  activeScrapes++;
+  const scrapePromise = doScrape(imdbId, type, season, episode)
+    .then(url => {
+      if (url) setCached(key, url);
+      pending.delete(key);
+      return url;
+    })
+    .catch(err => {
+      console.error('[scraper] Erro no scrape:', err.message);
+      pending.delete(key);
+      activeScrapes = Math.max(0, activeScrapes - 1);
+      return null;
+    });
+
+  pending.set(key, scrapePromise);
+  const url = await scrapePromise;
+  return url ? { url, type: 'direct' } : null;
 }
 
 module.exports = { fetchVideoSource };
