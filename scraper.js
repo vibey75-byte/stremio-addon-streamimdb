@@ -21,12 +21,12 @@ function getCached(key) {
   const entry = cache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.timestamp > CACHE_TTL) { cache.delete(key); return null; }
-  return entry.urls;
+  return entry.url;
 }
 
-function setCached(key, urls) {
-  cache.set(key, { urls, timestamp: Date.now() });
-  console.log(`[cache] Guardado: ${key} — ${urls.length} fonte(s) (cache size: ${cache.size})`);
+function setCached(key, url) {
+  cache.set(key, { url, timestamp: Date.now() });
+  console.log(`[cache] Guardado: ${key} (cache size: ${cache.size})`);
 }
 
 function parseBestQuality(content, masterUrl) {
@@ -49,22 +49,30 @@ function parseBestQuality(content, masterUrl) {
   return masterUrl;
 }
 
-// Tenta pré-seleccionar a melhor qualidade HLS; se o CDN bloquear, o Stremio gere isso nativamente
-async function fetchMaster(m3u8Url, referer) {
+// Testa um stream_url e retorna { url, verified }:
+//   verified=true  → CDN respondeu 200, qualidade seleccionada
+//   verified=false → CDN respondeu 4xx (provavelmente funciona no Stremio)
+//   null           → CDN inacessível (timeout / 5xx)
+async function resolveStream(m3u8Url, referer) {
   for (const headers of [{ 'User-Agent': UA, Referer: referer }, { 'User-Agent': UA }]) {
     try {
       const res = await axios.get(m3u8Url, {
         headers,
-        timeout: 8000,
+        timeout: 6000,
         maxRedirects: 5,
         responseType: 'text',
-        validateStatus: s => s === 200,
+        validateStatus: s => s < 500,
       });
-      const body = typeof res.data === 'string' ? res.data : '';
-      if (body.trimStart().startsWith('#EXTM3U')) return parseBestQuality(body, m3u8Url);
-    } catch { /* CDN bloqueou pré-fetch — normal, fallback para URL direto */ }
+      if (res.status === 200) {
+        const body = typeof res.data === 'string' ? res.data : '';
+        if (body.trimStart().startsWith('#EXTM3U'))
+          return { url: parseBestQuality(body, m3u8Url), verified: true };
+      }
+      // 4xx — CDN está vivo mas bloqueia o pré-fetch
+      return { url: m3u8Url, verified: false };
+    } catch { /* timeout ou erro de rede — tenta sem Referer */ }
   }
-  return m3u8Url;
+  return null; // CDN inacessível
 }
 
 async function doFetch(imdbId, type, season, episode) {
@@ -110,10 +118,17 @@ async function doFetch(imdbId, type, season, episode) {
     return null;
   }
 
-  // Resolve todas as fontes em paralelo; fetchMaster selecciona qualidade onde o CDN permitir
-  const resolved = await Promise.all(streamUrls.map(u => fetchMaster(u, referer)));
-  console.log(`[scraper] ${resolved.length} fonte(s) obtida(s)`);
-  return resolved;
+  // Testa todas as fontes em paralelo e escolhe a melhor disponível
+  const results = await Promise.all(streamUrls.map(u => resolveStream(u, referer)));
+
+  const verified = results.find(r => r?.verified);
+  if (verified) { console.log('[scraper] Fonte verificada (200)'); return verified.url; }
+
+  const fallback = results.find(r => r && !r.verified);
+  if (fallback) { console.log('[scraper] Fonte acessível (CDN bloqueou pré-fetch)'); return fallback.url; }
+
+  console.log('[scraper] Todas as fontes inacessíveis — a usar primeira como último recurso');
+  return streamUrls[0];
 }
 
 async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
@@ -123,13 +138,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   // 1. Cache hit
   const cached = getCached(key);
-  if (cached) { console.log(`[cache] Hit: ${key}`); return { urls: cached, type: 'direct' }; }
+  if (cached) { console.log(`[cache] Hit: ${key}`); return { url: cached, type: 'direct' }; }
 
   // 2. Deduplicação
   if (pending.has(key)) {
     console.log(`[cache] Dedup: aguardando fetch em curso para ${key}`);
-    const urls = await pending.get(key);
-    return urls ? { urls, type: 'direct' } : null;
+    const url = await pending.get(key);
+    return url ? { url, type: 'direct' } : null;
   }
 
   // 3. Rejeição por sobrecarga
@@ -141,11 +156,11 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   // 4. Novo fetch
   activeScrapes++;
   const fetchPromise = doFetch(imdbId, type, season, episode)
-    .then(urls => {
-      if (urls) setCached(key, urls);
+    .then(url => {
+      if (url) setCached(key, url);
       pending.delete(key);
       activeScrapes = Math.max(0, activeScrapes - 1);
-      return urls;
+      return url;
     })
     .catch(err => {
       console.error('[scraper] Erro:', err.message);
@@ -155,8 +170,8 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     });
 
   pending.set(key, fetchPromise);
-  const urls = await fetchPromise;
-  return urls ? { urls, type: 'direct' } : null;
+  const url = await fetchPromise;
+  return url ? { url, type: 'direct' } : null;
 }
 
 module.exports = { fetchVideoSource };
