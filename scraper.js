@@ -4,7 +4,7 @@ const axios = require('axios');
 const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
 const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
 
-const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 2 * 60 * 60 * 1000; // 2h
+const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 15 * 60 * 1000; // 15min
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 3;
 
 const cache   = new Map();
