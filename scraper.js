@@ -49,20 +49,27 @@ function parseBestQuality(content, masterUrl) {
   return masterUrl;
 }
 
-// Busca master playlist e selecciona melhor qualidade
+// Busca master playlist e selecciona melhor qualidade; tenta sem Referer se o CDN bloquear
 async function fetchMaster(m3u8Url, referer) {
-  try {
-    const res = await axios.get(m3u8Url, {
-      headers: { 'User-Agent': UA, Referer: referer },
-      timeout: 8000,
-      maxRedirects: 5,
-      responseType: 'text',
-    });
-    const body = typeof res.data === 'string' ? res.data : '';
-    if (body.trimStart().startsWith('#EXTM3U')) return parseBestQuality(body, m3u8Url);
-  } catch (e) {
-    console.log('[scraper] Erro ao buscar master:', e.message);
+  const attempts = [
+    { 'User-Agent': UA, Referer: referer },
+    { 'User-Agent': UA },
+  ];
+  for (const headers of attempts) {
+    try {
+      const res = await axios.get(m3u8Url, {
+        headers,
+        timeout: 8000,
+        maxRedirects: 5,
+        responseType: 'text',
+      });
+      const body = typeof res.data === 'string' ? res.data : '';
+      if (body.trimStart().startsWith('#EXTM3U')) return parseBestQuality(body, m3u8Url);
+    } catch (e) {
+      console.log(`[scraper] fetchMaster (${headers.Referer ? 'com' : 'sem'} referer):`, e.message);
+    }
   }
+  console.log('[scraper] A usar URL master direto (CDN bloqueou pré-fetch)');
   return m3u8Url;
 }
 
