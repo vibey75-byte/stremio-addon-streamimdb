@@ -1,14 +1,15 @@
 # StreamIMDb Connector — Stremio Add-on
 
-A local Stremio add-on that extracts video streams directly from [streamimdb.me](https://streamimdb.me) and plays them natively inside Stremio, without opening a browser.
+A Stremio add-on that fetches `.m3u8` video streams via a direct API call and plays them natively inside Stremio, without opening a browser.
 
 ## How it works
 
 1. You click on a movie or series in Stremio
 2. The add-on receives the IMDb ID (e.g. `tt0076759`)
-3. A headless browser (Puppeteer) navigates to `streamimdb.me` in the background
-4. It captures the real `.m3u8` stream URL
-5. Returns it to Stremio for native playback
+3. It calls `streamdata.vaplayer.ru/api.php` directly (no browser, pure HTTP)
+4. The API returns a list of `.m3u8` stream URLs
+5. The best quality variant is selected from the HLS master playlist
+6. The stream URL is returned to Stremio for native playback
 
 ## Requirements
 
@@ -36,16 +37,34 @@ To install in Stremio, open Stremio and add the add-on using this URL:
 http://localhost:7000/manifest.json
 ```
 
+Or visit `http://localhost:7000` for the install page.
+
+## Performance
+
+| | v1.0 (Puppeteer) | v1.1 (API direct) |
+|---|---|---|
+| Response time | ~25s | <5s |
+| RAM per request | ~150 MB | ~5 MB |
+| Simultaneous users | 1–2 | Unlimited |
+
 ## Notes
 
-- The first stream request takes ~20-30 seconds (the headless browser needs to load the pages)
-- Supports both movies and series
-- Automatically falls back to opening in the browser if the stream cannot be captured
+- Supports movies and series
+- Results are cached for 2 hours — repeat requests are instant
+- Falls back to an external URL if the stream cannot be fetched
+
+## Environment variables (optional)
+
+| Variable | Default |
+|---|---|
+| `VAPLAYER_API_URL` | `https://streamdata.vaplayer.ru/api.php` |
+| `CACHE_TTL_MS` | `7200000` (2h) |
+| `MAX_QUEUE` | `3` |
 
 ## Project structure
 
 ```
-server.js   — HTTP server on port 7000
+server.js   — HTTP server (port 7000) + landing page
 addon.js    — Stremio SDK manifest and stream handler
-scraper.js  — Puppeteer logic to capture the stream URL
+scraper.js  — API fetch logic with cache, dedup and queue protection
 ```
