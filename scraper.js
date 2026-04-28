@@ -1,19 +1,17 @@
-const puppeteer = require('puppeteer');
-const fs = require('fs');
+'use strict';
+const axios = require('axios');
 
-// URLs configuráveis via env vars — sem redeploy quando o site muda
-const MOVIE_PLAYER  = process.env.MOVIE_PLAYER_URL  || 'https://player.mov2day.xyz/movie';
-const TV_EMBED      = process.env.TV_EMBED_URL       || 'https://cdn.mov2day.xyz/embed/tv';
+const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
+const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
 
-const CACHE_TTL     = parseInt(process.env.CACHE_TTL_MS)  || 2 * 60 * 60 * 1000; // 2h
-const MAX_QUEUE     = parseInt(process.env.MAX_QUEUE)      || 3; // máx pedidos únicos em fila
+const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 2 * 60 * 60 * 1000; // 2h
+const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 3;
 
-// Cache de resultados: evita rescraping do mesmo conteúdo
-const cache = new Map();
-// Deduplicação: se o mesmo conteúdo está a ser scraped, aguarda o resultado existente
+const cache   = new Map();
 const pending = new Map();
-
 let activeScrapes = 0;
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 function cacheKey(imdbId, type, season, episode) {
   return `${imdbId}:${type}:${season || ''}:${episode || ''}`;
@@ -31,17 +29,6 @@ function setCached(key, url) {
   console.log(`[cache] Guardado: ${key} (cache size: ${cache.size})`);
 }
 
-function getBrowserPath() {
-  const paths = [
-    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
-    '/usr/bin/chromium-browser', '/usr/bin/chromium',
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-  ];
-  return paths.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || undefined;
-}
-
 function parseBestQuality(content, masterUrl) {
   try {
     const lines = content.split('\n');
@@ -49,7 +36,7 @@ function parseBestQuality(content, masterUrl) {
     let bestBandwidth = 0;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
-        const bw = parseInt((lines[i].match(/BANDWIDTH=(\d+)/) || [])[1] || 0);
+        const bw  = parseInt((lines[i].match(/BANDWIDTH=(\d+)/) || [])[1] || 0);
         const src = lines[i + 1]?.trim();
         if (src && bw >= bestBandwidth) {
           bestBandwidth = bw;
@@ -62,95 +49,69 @@ function parseBestQuality(content, masterUrl) {
   return masterUrl;
 }
 
-// Browser persistente
-let browser = null;
-
-async function getBrowser() {
-  if (browser) {
-    try { await browser.pages(); return browser; } catch { browser = null; }
+// Busca master playlist e selecciona melhor qualidade
+async function fetchMaster(m3u8Url, referer) {
+  try {
+    const res = await axios.get(m3u8Url, {
+      headers: { 'User-Agent': UA, Referer: referer },
+      timeout: 8000,
+      maxRedirects: 5,
+      responseType: 'text',
+    });
+    const body = typeof res.data === 'string' ? res.data : '';
+    if (body.trimStart().startsWith('#EXTM3U')) return parseBestQuality(body, m3u8Url);
+  } catch (e) {
+    console.log('[scraper] Erro ao buscar master:', e.message);
   }
-  console.log('[browser] A lançar...');
-  browser = await puppeteer.launch({
-    headless: true,
-    executablePath: getBrowserPath(),
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
-  });
-  console.log('[browser] Pronto');
-  return browser;
+  return m3u8Url;
 }
 
-getBrowser().catch(e => console.error('[browser] Erro no arranque:', e.message));
+async function doFetch(imdbId, type, season, episode) {
+  // O Referer deve imitar a página embed do brightpathsignals para a API autorizar o pedido
+  const referer = type === 'series'
+    ? `${BRIGHTPATH_BASE}/tv/${imdbId}/${season}/${episode}`
+    : `${BRIGHTPATH_BASE}/movie/${imdbId}`;
 
-// Scraping de um único conteúdo (sem cache, sem deduplicação)
-async function doScrape(imdbId, type, season, episode) {
-  const playerUrl = type === 'series'
-    ? `${TV_EMBED}/${imdbId}/${season}/${episode}`
-    : `${MOVIE_PLAYER}/${imdbId}`;
+  const params = { imdb: imdbId, type: type === 'series' ? 'tv' : 'movie' };
+  if (type === 'series') { params.season = season; params.episode = episode; }
 
-  console.log(`[scraper] A tentar (${type}):`, playerUrl);
-  let page1;
-
+  let apiRes;
   try {
-    const b = await getBrowser();
-    page1 = await b.newPage();
-    await page1.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-    await page1.setRequestInterception(true);
-
-    let masterUrl = null;
-    let masterContentResolve;
-    const masterContentPromise = new Promise(r => { masterContentResolve = r; });
-
-    page1.on('request', req => {
-      const url = req.url();
-      if (url.includes('.m3u8')) {
-        if (!masterUrl || (!masterUrl.includes('master') && url.includes('master'))) masterUrl = url;
-      }
-      req.continue();
+    apiRes = await axios.get(VAPLAYER_API_URL, {
+      params,
+      headers: {
+        'User-Agent': UA,
+        'Referer': referer,
+        'Origin': 'https://brightpathsignals.com',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      timeout: 10000,
+      maxRedirects: 5,
     });
-
-    page1.on('response', async res => {
-      try {
-        if (res.url().includes('master.m3u8')) {
-          const text = await res.text();
-          masterContentResolve(text);
-        }
-      } catch { masterContentResolve(null); }
-    });
-
-    await page1.goto(playerUrl, { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
-
-    if (type === 'movie') {
-      await page1.click('#play-btn').catch(() => {});
-      console.log('[scraper] Play clicado...');
-    }
-
-    const deadline = Date.now() + 15000;
-    while (!masterUrl && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 500));
-    }
-
-    const masterContent = await Promise.race([
-      masterContentPromise,
-      new Promise(r => setTimeout(() => r(null), 3000))
-    ]);
-
-    await page1.close();
-    page1 = null;
-
-    if (!masterUrl) { console.log('[scraper] Stream não capturado'); return null; }
-    console.log('[scraper] Stream capturado:', masterUrl.substring(0, 80));
-
-    return masterContent ? parseBestQuality(masterContent, masterUrl) : masterUrl;
-
-  } catch (err) {
-    console.error('[scraper] Erro:', err.message);
-    browser = null;
+  } catch (e) {
+    console.error('[scraper] Erro na chamada API:', e.message);
     return null;
-  } finally {
-    if (page1) await page1.close().catch(() => {});
-    activeScrapes = Math.max(0, activeScrapes - 1);
   }
+
+  const body = apiRes.data;
+  const preview = JSON.stringify(body).substring(0, 200);
+  console.log(`[scraper] API ${apiRes.status} — ${preview}`);
+
+  if (apiRes.status !== 200 || !body || !body.data) {
+    console.log('[scraper] Resposta inválida ou erro da API');
+    return null;
+  }
+
+  const streamUrls = body.data.stream_urls;
+  if (!Array.isArray(streamUrls) || !streamUrls.length) {
+    console.log('[scraper] Nenhum stream_url na resposta');
+    return null;
+  }
+
+  const masterUrl = streamUrls[0];
+  console.log('[scraper] stream_url obtido:', masterUrl.substring(0, 80));
+  return fetchMaster(masterUrl, referer);
 }
 
 async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
@@ -158,43 +119,41 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   const key = cacheKey(imdbId, type, season, episode);
 
-  // 1. Cache hit — resposta instantânea
+  // 1. Cache hit
   const cached = getCached(key);
-  if (cached) {
-    console.log(`[cache] Hit: ${key}`);
-    return { url: cached, type: 'direct' };
-  }
+  if (cached) { console.log(`[cache] Hit: ${key}`); return { url: cached, type: 'direct' }; }
 
-  // 2. Deduplicação — mesmo conteúdo já está a ser scraped
+  // 2. Deduplicação
   if (pending.has(key)) {
-    console.log(`[cache] Dedup: aguardando scrape em curso para ${key}`);
+    console.log(`[cache] Dedup: aguardando fetch em curso para ${key}`);
     const url = await pending.get(key);
     return url ? { url, type: 'direct' } : null;
   }
 
-  // 3. Rejeição por sobrecarga — protege o servidor
+  // 3. Rejeição por sobrecarga
   if (activeScrapes >= MAX_QUEUE) {
-    console.log(`[scraper] Sobrecarga (${activeScrapes} scrapes activos) — a rejeitar pedido`);
+    console.log(`[scraper] Sobrecarga (${activeScrapes} pedidos activos) — a rejeitar`);
     return null;
   }
 
-  // 4. Iniciar novo scrape
+  // 4. Novo fetch
   activeScrapes++;
-  const scrapePromise = doScrape(imdbId, type, season, episode)
+  const fetchPromise = doFetch(imdbId, type, season, episode)
     .then(url => {
       if (url) setCached(key, url);
       pending.delete(key);
+      activeScrapes = Math.max(0, activeScrapes - 1);
       return url;
     })
     .catch(err => {
-      console.error('[scraper] Erro no scrape:', err.message);
+      console.error('[scraper] Erro:', err.message);
       pending.delete(key);
       activeScrapes = Math.max(0, activeScrapes - 1);
       return null;
     });
 
-  pending.set(key, scrapePromise);
-  const url = await scrapePromise;
+  pending.set(key, fetchPromise);
+  const url = await fetchPromise;
   return url ? { url, type: 'direct' } : null;
 }
 
