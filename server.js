@@ -2,8 +2,10 @@ const express = require('express');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus } = require('./scraper');
+const { startHealthChecks, getHealthStatus } = require('./health');
 
 const START_TIME = Date.now();
+startHealthChecks();
 
 const PORT = process.env.PORT || 7000;
 const app = express();
@@ -94,6 +96,7 @@ app.get('/health', (req, res) => {
     version: '1.1.1',
     uptimeSeconds: Math.floor((Date.now() - START_TIME) / 1000),
     scraper: getStatus(),
+    health: getHealthStatus(),
     memory: {
       heapUsedMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
       heapTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
