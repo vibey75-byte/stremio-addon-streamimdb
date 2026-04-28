@@ -174,4 +174,17 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   return url ? { url, type: 'direct' } : null;
 }
 
-module.exports = { fetchVideoSource };
+function getStatus() {
+  const now = Date.now();
+  const entries = [];
+  for (const [key, entry] of cache.entries()) {
+    entries.push({ key, ageSeconds: Math.floor((now - entry.timestamp) / 1000) });
+  }
+  return {
+    activeScrapes,
+    maxQueue: MAX_QUEUE,
+    cache: { size: cache.size, ttlSeconds: Math.floor(CACHE_TTL / 1000), entries },
+  };
+}
+
+module.exports = { fetchVideoSource, getStatus };
