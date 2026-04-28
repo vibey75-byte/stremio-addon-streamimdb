@@ -3,7 +3,7 @@ const { fetchVideoSource } = require('./scraper');
 
 const manifest = {
   id: 'org.local.streamimdb',
-  version: '1.1.0',
+  version: '1.1.1',
   name: 'StreamIMDb Connector',
   description: 'Stream movies and series via streamimdb.me natively inside Stremio.',
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',

@@ -1,4 +1,4 @@
-# StreamIMDb Connector v1.1.0
+# StreamIMDb Connector v1.1.1
 
 ## Comandos
 ```
@@ -13,7 +13,7 @@ Porta ocupada: `powershell -Command "$c=Get-NetTCPConnection -LocalPort 7000 -EA
 
 ## Estrutura
 - `server.js` — express + `getRouter(addon)` + landing page em `/`
-- `addon.js` — manifesto `org.local.streamimdb` v1.1.0 + `defineStreamHandler`
+- `addon.js` — manifesto `org.local.streamimdb` v1.1.1 + `defineStreamHandler`
 - `scraper.js` — fetch API com cache, dedup e protecção de sobrecarga
 
 ## Fluxo do Scraper
@@ -34,7 +34,7 @@ Porta ocupada: `powershell -Command "$c=Get-NetTCPConnection -LocalPort 7000 -EA
 - CommonJS (`require`). `try/catch` em todos os handlers. Séries: `tt1234567:1:2` → split.
 
 ## Branches
-- `main` / `Experimental` — em sync, v1.1.0 em produção (Render)
+- `main` / `Experimental` — em sync, v1.1.1 em produção (Render)
 - `backup/working-v1` — backup estável com Puppeteer
 
 ## Notas
