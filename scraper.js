@@ -49,27 +49,21 @@ function parseBestQuality(content, masterUrl) {
   return masterUrl;
 }
 
-// Busca master playlist e selecciona melhor qualidade; tenta sem Referer se o CDN bloquear
+// Tenta pré-seleccionar a melhor qualidade HLS; se o CDN bloquear, o Stremio gere isso nativamente
 async function fetchMaster(m3u8Url, referer) {
-  const attempts = [
-    { 'User-Agent': UA, Referer: referer },
-    { 'User-Agent': UA },
-  ];
-  for (const headers of attempts) {
+  for (const headers of [{ 'User-Agent': UA, Referer: referer }, { 'User-Agent': UA }]) {
     try {
       const res = await axios.get(m3u8Url, {
         headers,
         timeout: 8000,
         maxRedirects: 5,
         responseType: 'text',
+        validateStatus: s => s === 200,
       });
       const body = typeof res.data === 'string' ? res.data : '';
       if (body.trimStart().startsWith('#EXTM3U')) return parseBestQuality(body, m3u8Url);
-    } catch (e) {
-      console.log(`[scraper] fetchMaster (${headers.Referer ? 'com' : 'sem'} referer):`, e.message);
-    }
+    } catch { /* CDN bloqueou pré-fetch — normal, fallback para URL direto */ }
   }
-  console.log('[scraper] A usar URL master direto (CDN bloqueou pré-fetch)');
   return m3u8Url;
 }
 
