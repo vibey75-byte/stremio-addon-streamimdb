@@ -1,36 +1,48 @@
-# Stremio Add-on — StreamIMDb Connector
+# Stremio Add-on — StreamIMDb Connector v1.0.1
 
 ## Comandos
 ```
-npm install          # instalar dependências
-node server.js       # iniciar em localhost:7000
+npm install
+node server.js       # porta 7000 (local) ou process.env.PORT (Render)
 curl http://localhost:7000/manifest.json
 curl "http://localhost:7000/stream/movie/tt0076759.json"
 ```
-Se a porta 7000 estiver ocupada: `powershell -Command "$c=Get-NetTCPConnection -LocalPort 7000; taskkill /F /PID $c.OwningProcess"`
+Porta ocupada: `powershell -Command "$c=Get-NetTCPConnection -LocalPort 7000 -EA SilentlyContinue; if($c){taskkill /F /PID $c.OwningProcess}"`
 
 ## Stack
-`stremio-addon-sdk` · `puppeteer` (Chrome bundled em `~/.cache/puppeteer`) · `axios` · `cheerio`
+`stremio-addon-sdk` · `express` · `puppeteer` (Chrome bundled em `~/.cache/puppeteer`)
 
 ## Estrutura
-- `server.js` — `serveHTTP(addon, { port: 7000 })`
-- `addon.js` — manifesto (`org.local.playimdb`) + `defineStreamHandler` para `movie`/`series`
-- `scraper.js` — Puppeteer: embed → Cloudnestra → clica `#pl_but` → captura `.m3u8`
+- `server.js` — express + `getRouter(addon)` + landing page customizada em `/`
+- `addon.js` — manifesto (`org.local.streamimdb` v1.0.1) + `defineStreamHandler`
+- `scraper.js` — Puppeteer com cache, deduplicação, env vars e protecção de sobrecarga
+- `package.json` — dependências principais
+
+## Fluxo do Scraper
+- **Filmes:** `player.mov2day.xyz/movie/{imdbId}` → clica `#play-btn` → captura `.m3u8`
+- **Séries:** `cdn.mov2day.xyz/embed/tv/{imdbId}/{season}/{episode}` → captura `.m3u8` directamente
+- Interceta resposta `master.m3u8` no browser → parseia para obter maior qualidade
+- Fallback: `{ streams: [{ externalUrl, title: 'No stream available' }] }`
+
+## Environment Variables (opcionais)
+| Variável | Default |
+|---|---|
+| `MOVIE_PLAYER_URL` | `https://player.mov2day.xyz/movie` |
+| `TV_EMBED_URL` | `https://cdn.mov2day.xyz/embed/tv` |
+| `CACHE_TTL_MS` | `7200000` (2h) |
+| `MAX_QUEUE` | `3` |
 
 ## Padrões
 - CommonJS (`require`). Sem `import`.
-- Handlers envolvidos em `try/catch`; erro → `{ streams: [] }`.
-- Funções de scraping com prefixo `fetch`.
-- User-Agent de Chrome real em todos os pedidos.
-- Séries: `args.id` vem como `tt1234567:1:2` — usar `split(':')[0]`.
+- `try/catch` em todos os handlers; erro → `{ streams: [] }`.
+- Séries: `args.id` = `tt1234567:1:2` → split para imdbId, season, episode.
 
-## Fluxo do Scraper (`scraper.js`)
-1. Puppeteer abre `https://streamimdb.me/embed/{imdbId}/`
-2. Interceta pedidos → captura URL `cloudnestra.com/rcp/...`
-3. Navega para esse URL (Referer: streamimdb.me), clica `#pl_but`
-4. Aguarda pedido de rede com `.m3u8` → devolve `{ url, type: 'direct' }`
-5. Fallback: `externalUrl` para `streamimdb.me/embed/{id}/`
+## Branches
+- `main` — versão estável em produção (Render)
+- `Experimental` — v1.0.1 com cache+dedup+env vars+fixes
+- `backup/working-v3` — último backup estável confirmado
 
 ## Notas
-- Cada pedido de stream demora ~20-30s (Puppeteer + carregamento de páginas).
-- Legendas: ver `CONTEXT.md` — bloqueadas por Cloudflare Turnstile; implementação futura via `puppeteer-extra-plugin-stealth`.
+- Puppeteer tem problema de escala com tráfego público — ver PROMPT.md para Opção A (eliminar Puppeteer via reverse-engineering de API).
+- Séries não funcionam no Render (datacenter IP bloqueado pelo CDN) — funcionam localmente.
+- Legendas: bloqueadas por Cloudflare Turnstile — ver CONTEXT.md.
