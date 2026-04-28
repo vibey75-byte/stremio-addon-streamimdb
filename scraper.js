@@ -21,37 +21,64 @@ function getCached(key) {
   const entry = cache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.timestamp > CACHE_TTL) { cache.delete(key); return null; }
-  return entry.url;
+  return entry.streams;
 }
 
-function setCached(key, url) {
-  cache.set(key, { url, timestamp: Date.now() });
+function setCached(key, streams) {
+  cache.set(key, { streams, timestamp: Date.now() });
   console.log(`[cache] Guardado: ${key} (cache size: ${cache.size})`);
 }
 
-function parseBestQuality(content, masterUrl) {
-  try {
-    const lines = content.split('\n');
-    let best = null;
-    let bestBandwidth = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
-        const bw  = parseInt((lines[i].match(/BANDWIDTH=(\d+)/) || [])[1] || 0);
-        const src = lines[i + 1]?.trim();
-        if (src && bw >= bestBandwidth) {
-          bestBandwidth = bw;
-          best = src.startsWith('http') ? src : new URL(src, masterUrl).href;
-        }
-      }
-    }
-    if (best) { console.log(`[scraper] Qualidade: ${Math.round(bestBandwidth / 1000)}kbps`); return best; }
-  } catch (e) { console.log('[scraper] Erro ao parsear qualidade:', e.message); }
-  return masterUrl;
+function resolutionToQuality(resolution, bandwidth) {
+  if (resolution) {
+    const h = parseInt(resolution.split('x')[1]) || 0;
+    if (h >= 2160) return '4K';
+    if (h >= 1440) return '2K';
+    if (h >= 1080) return '1080p';
+    if (h >= 720)  return '720p';
+    if (h >= 480)  return '480p';
+    if (h >= 360)  return '360p';
+  }
+  if (bandwidth > 8000000) return '4K';
+  if (bandwidth > 4000000) return '1080p';
+  if (bandwidth > 2000000) return '720p';
+  if (bandwidth > 800000)  return '480p';
+  return 'Auto';
 }
 
-// Testa um stream_url e retorna { url, verified }:
-//   verified=true  → CDN respondeu 200, qualidade seleccionada
-//   verified=false → CDN respondeu 4xx (provavelmente funciona no Stremio)
+function parseMasterPlaylist(body, masterUrl) {
+  const base  = masterUrl.substring(0, masterUrl.lastIndexOf('/') + 1);
+  const lines = body.split('\n');
+  const seen  = new Set();
+  const variants = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
+
+    const bwMatch  = line.match(/BANDWIDTH=(\d+)/);
+    const resMatch = line.match(/RESOLUTION=([\dx]+)/);
+    const bandwidth  = bwMatch  ? parseInt(bwMatch[1])  : 0;
+    const resolution = resMatch ? resMatch[1] : null;
+
+    const urlLine = lines[i + 1]?.trim();
+    if (!urlLine || urlLine.startsWith('#')) continue;
+
+    const url     = urlLine.startsWith('http') ? urlLine : base + urlLine;
+    const quality = resolutionToQuality(resolution, bandwidth);
+
+    if (!seen.has(quality)) {
+      seen.add(quality);
+      variants.push({ url, quality, bandwidth });
+    }
+  }
+
+  return variants.sort((a, b) => b.bandwidth - a.bandwidth);
+}
+
+// Testa um stream_url:
+//   verified=true  → CDN respondeu 200 com playlist HLS válida
+//   verified=false → CDN respondeu 4xx (stream provavelmente funciona)
 //   null           → CDN inacessível (timeout / 5xx)
 async function resolveStream(m3u8Url, referer) {
   for (const headers of [{ 'User-Agent': UA, Referer: referer }, { 'User-Agent': UA }]) {
@@ -66,17 +93,15 @@ async function resolveStream(m3u8Url, referer) {
       if (res.status === 200) {
         const body = typeof res.data === 'string' ? res.data : '';
         if (body.trimStart().startsWith('#EXTM3U'))
-          return { url: parseBestQuality(body, m3u8Url), verified: true };
+          return { url: m3u8Url, verified: true, body };
       }
-      // 4xx — CDN está vivo mas bloqueia o pré-fetch
       return { url: m3u8Url, verified: false };
     } catch { /* timeout ou erro de rede — tenta sem Referer */ }
   }
-  return null; // CDN inacessível
+  return null;
 }
 
 async function doFetch(imdbId, type, season, episode) {
-  // O Referer deve imitar a página embed do brightpathsignals para a API autorizar o pedido
   const referer = type === 'series'
     ? `${BRIGHTPATH_BASE}/tv/${imdbId}/${season}/${episode}`
     : `${BRIGHTPATH_BASE}/movie/${imdbId}`;
@@ -104,8 +129,7 @@ async function doFetch(imdbId, type, season, episode) {
   }
 
   const body = apiRes.data;
-  const preview = JSON.stringify(body).substring(0, 200);
-  console.log(`[scraper] API ${apiRes.status} — ${preview}`);
+  console.log(`[scraper] API ${apiRes.status} — ${JSON.stringify(body).substring(0, 200)}`);
 
   if (apiRes.status !== 200 || !body || !body.data) {
     console.log('[scraper] Resposta inválida ou erro da API');
@@ -118,17 +142,27 @@ async function doFetch(imdbId, type, season, episode) {
     return null;
   }
 
-  // Testa todas as fontes em paralelo e escolhe a melhor disponível
   const results = await Promise.all(streamUrls.map(u => resolveStream(u, referer)));
+  const best = results.find(r => r?.verified) || results.find(r => r && !r.verified);
 
-  const verified = results.find(r => r?.verified);
-  if (verified) { console.log('[scraper] Fonte verificada (200)'); return verified.url; }
+  if (!best) {
+    console.log('[scraper] Todas as fontes inacessíveis — a usar primeira como último recurso');
+    return [{ url: streamUrls[0], quality: 'Auto' }];
+  }
 
-  const fallback = results.find(r => r && !r.verified);
-  if (fallback) { console.log('[scraper] Fonte acessível (CDN bloqueou pré-fetch)'); return fallback.url; }
+  if (!best.verified || !best.body) {
+    console.log('[scraper] Fonte acessível (CDN bloqueou pré-fetch)');
+    return [{ url: best.url, quality: 'Auto' }];
+  }
 
-  console.log('[scraper] Todas as fontes inacessíveis — a usar primeira como último recurso');
-  return streamUrls[0];
+  const variants = parseMasterPlaylist(best.body, best.url);
+  if (variants.length > 0) {
+    console.log(`[scraper] ${variants.length} qualidade(s): ${variants.map(v => v.quality).join(', ')}`);
+    return variants;
+  }
+
+  console.log('[scraper] Fonte verificada (sem variantes)');
+  return [{ url: best.url, quality: 'Auto' }];
 }
 
 async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
@@ -136,31 +170,27 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   const key = cacheKey(imdbId, type, season, episode);
 
-  // 1. Cache hit
   const cached = getCached(key);
-  if (cached) { console.log(`[cache] Hit: ${key}`); return { url: cached, type: 'direct' }; }
+  if (cached) { console.log(`[cache] Hit: ${key}`); return { streams: cached, type: 'direct' }; }
 
-  // 2. Deduplicação
   if (pending.has(key)) {
     console.log(`[cache] Dedup: aguardando fetch em curso para ${key}`);
-    const url = await pending.get(key);
-    return url ? { url, type: 'direct' } : null;
+    const streams = await pending.get(key);
+    return streams ? { streams, type: 'direct' } : null;
   }
 
-  // 3. Rejeição por sobrecarga
   if (activeScrapes >= MAX_QUEUE) {
     console.log(`[scraper] Sobrecarga (${activeScrapes} pedidos activos) — a rejeitar`);
     return null;
   }
 
-  // 4. Novo fetch
   activeScrapes++;
   const fetchPromise = doFetch(imdbId, type, season, episode)
-    .then(url => {
-      if (url) setCached(key, url);
+    .then(streams => {
+      if (streams) setCached(key, streams);
       pending.delete(key);
       activeScrapes = Math.max(0, activeScrapes - 1);
-      return url;
+      return streams;
     })
     .catch(err => {
       console.error('[scraper] Erro:', err.message);
@@ -170,8 +200,8 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     });
 
   pending.set(key, fetchPromise);
-  const url = await fetchPromise;
-  return url ? { url, type: 'direct' } : null;
+  const streams = await fetchPromise;
+  return streams ? { streams, type: 'direct' } : null;
 }
 
 function getStatus() {

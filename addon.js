@@ -36,19 +36,19 @@ builder.defineStreamHandler(async (args) => {
 
     if (result && result.type === 'direct') {
       return {
-        streams: [{
-          url: result.url,
-          name: 'StreamIMDb',
-          title: type === 'series' ? `S${season}E${episode}` : 'Stream direto',
-        }]
+        streams: result.streams.map(({ url, quality }) => ({
+          url,
+          name:  'StreamIMDb',
+          title: type === 'series' ? `S${season}E${episode} · ${quality}` : quality,
+        }))
       };
     }
 
     return {
       streams: [{
         externalUrl: fallbackUrl,
-        name: 'StreamIMDb',
-        title: 'No stream available'
+        name:  'StreamIMDb',
+        title: 'No stream available',
       }]
     };
   } catch (err) {
