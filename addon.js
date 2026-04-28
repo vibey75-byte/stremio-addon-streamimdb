@@ -39,7 +39,10 @@ builder.defineStreamHandler(async (args) => {
         streams: [{
           url: result.url,
           name: 'StreamIMDb',
-          title: 'Stream direto'
+          title: 'Stream direto',
+          behaviorHints: {
+            bingeGroup: `streamimdb|${imdbId}`
+          }
         }]
       };
     }
