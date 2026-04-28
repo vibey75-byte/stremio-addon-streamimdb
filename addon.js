@@ -36,14 +36,14 @@ builder.defineStreamHandler(async (args) => {
 
     if (result && result.type === 'direct') {
       return {
-        streams: [{
-          url: result.url,
+        streams: result.urls.map((url, i) => ({
+          url,
           name: 'StreamIMDb',
-          title: 'Stream direto',
+          title: `Fonte ${i + 1}`,
           behaviorHints: {
             bingeGroup: `streamimdb|${imdbId}`
           }
-        }]
+        }))
       };
     }
 

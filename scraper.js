@@ -21,12 +21,12 @@ function getCached(key) {
   const entry = cache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.timestamp > CACHE_TTL) { cache.delete(key); return null; }
-  return entry.url;
+  return entry.urls;
 }
 
-function setCached(key, url) {
-  cache.set(key, { url, timestamp: Date.now() });
-  console.log(`[cache] Guardado: ${key} (cache size: ${cache.size})`);
+function setCached(key, urls) {
+  cache.set(key, { urls, timestamp: Date.now() });
+  console.log(`[cache] Guardado: ${key} — ${urls.length} fonte(s) (cache size: ${cache.size})`);
 }
 
 function parseBestQuality(content, masterUrl) {
@@ -110,9 +110,10 @@ async function doFetch(imdbId, type, season, episode) {
     return null;
   }
 
-  const masterUrl = streamUrls[0];
-  console.log('[scraper] stream_url obtido:', masterUrl.substring(0, 80));
-  return fetchMaster(masterUrl, referer);
+  // Resolve todas as fontes em paralelo; fetchMaster selecciona qualidade onde o CDN permitir
+  const resolved = await Promise.all(streamUrls.map(u => fetchMaster(u, referer)));
+  console.log(`[scraper] ${resolved.length} fonte(s) obtida(s)`);
+  return resolved;
 }
 
 async function fetchVideoSource(imdbId, type = 'movie', season = null, episode = null) {
@@ -122,13 +123,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
 
   // 1. Cache hit
   const cached = getCached(key);
-  if (cached) { console.log(`[cache] Hit: ${key}`); return { url: cached, type: 'direct' }; }
+  if (cached) { console.log(`[cache] Hit: ${key}`); return { urls: cached, type: 'direct' }; }
 
   // 2. Deduplicação
   if (pending.has(key)) {
     console.log(`[cache] Dedup: aguardando fetch em curso para ${key}`);
-    const url = await pending.get(key);
-    return url ? { url, type: 'direct' } : null;
+    const urls = await pending.get(key);
+    return urls ? { urls, type: 'direct' } : null;
   }
 
   // 3. Rejeição por sobrecarga
@@ -140,11 +141,11 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   // 4. Novo fetch
   activeScrapes++;
   const fetchPromise = doFetch(imdbId, type, season, episode)
-    .then(url => {
-      if (url) setCached(key, url);
+    .then(urls => {
+      if (urls) setCached(key, urls);
       pending.delete(key);
       activeScrapes = Math.max(0, activeScrapes - 1);
-      return url;
+      return urls;
     })
     .catch(err => {
       console.error('[scraper] Erro:', err.message);
@@ -154,8 +155,8 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     });
 
   pending.set(key, fetchPromise);
-  const url = await fetchPromise;
-  return url ? { url, type: 'direct' } : null;
+  const urls = await fetchPromise;
+  return urls ? { urls, type: 'direct' } : null;
 }
 
 module.exports = { fetchVideoSource };
