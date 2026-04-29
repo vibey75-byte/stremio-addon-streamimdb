@@ -63,6 +63,11 @@ app.get('/', (req, res) => {
     }
     textarea:focus { outline: none; border-color: #7b3fe4; }
     .btn-report { background: #2a2a3a; color: #ccc; font-size: 0.9rem; }
+    .tip {
+      background: #12121a; border: 1px solid #2a2a3a; border-radius: 10px;
+      padding: 12px 14px; font-size: 0.82rem; color: #888; line-height: 1.5; margin-top: 4px;
+    }
+    .tip strong { color: #bbb; }
     .footer { margin-top: 24px; font-size: 0.75rem; color: #444; text-align: center; }
     .footer a { color: #666; text-decoration: none; }
   </style>
@@ -75,6 +80,9 @@ app.get('/', (req, res) => {
     <p>Stream movies and series natively inside Stremio — no browser required.</p>
     <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
     <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
+    <hr class="divider">
+    <div class="label">Android tip</div>
+    <div class="tip">If streams don't play on Android, go to <strong>Stremio → Settings → Player</strong> and switch to <strong>VLC</strong>. ExoPlayer (default) may fail with HLS proxy streams.</div>
     <hr class="divider">
     <div class="label">Report an issue</div>
     <textarea id="msg" placeholder="Describe the issue (e.g. movie title, what happened)..."></textarea>
