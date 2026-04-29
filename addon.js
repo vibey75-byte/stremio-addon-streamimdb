@@ -1,5 +1,14 @@
+'use strict';
 const { addonBuilder } = require('stremio-addon-sdk');
 const { fetchVideoSource } = require('./scraper');
+
+const BRIGHTPATH_BASE = 'https://brightpathsignals.com/embed';
+const PORT = process.env.PORT || 7000;
+const SERVER_BASE = (
+  process.env.RENDER_EXTERNAL_URL ||
+  process.env.SERVER_URL ||
+  `http://localhost:${PORT}`
+).replace(/\/$/, '');
 
 const manifest = {
   id: 'org.local.streamimdb',
@@ -15,6 +24,11 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+function makeHlsProxyUrl(streamUrl, referer) {
+  const encoded = Buffer.from(JSON.stringify({ u: streamUrl, r: referer })).toString('base64url');
+  return `${SERVER_BASE}/hls/${encoded}`;
+}
+
 builder.defineStreamHandler(async (args) => {
   try {
     const parts = args.id.split(':');
@@ -22,6 +36,10 @@ builder.defineStreamHandler(async (args) => {
     const type = parts.length > 1 ? 'series' : 'movie';
     const season = parts[1] || null;
     const episode = parts[2] || null;
+
+    const referer = type === 'series'
+      ? `${BRIGHTPATH_BASE}/tv/${imdbId}/${season}/${episode}`
+      : `${BRIGHTPATH_BASE}/movie/${imdbId}`;
 
     const fallbackUrl = type === 'series'
       ? `https://streamimdb.me/embed/${imdbId}/${season}/${episode}/`
@@ -34,10 +52,18 @@ builder.defineStreamHandler(async (args) => {
       console.error(`[handler] Erro no scraper: ${scraperErr.message}`);
     }
 
+    // Retry once on transient null (overload slot freed or brief API hiccup)
+    if (!result) {
+      await new Promise(r => setTimeout(r, 600));
+      try {
+        result = await fetchVideoSource(imdbId, type, season, episode);
+      } catch (_) {}
+    }
+
     if (result && result.type === 'direct') {
       return {
         streams: result.streams.map(({ url, quality }) => ({
-          url,
+          url: makeHlsProxyUrl(url, referer),
           name:  'StreamIMDb',
           title: type === 'series' ? `S${season}E${episode} · ${quality}` : quality,
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,

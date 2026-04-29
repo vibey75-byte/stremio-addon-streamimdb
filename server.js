@@ -1,4 +1,6 @@
+'use strict';
 const express = require('express');
+const axios   = require('axios');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus } = require('./scraper');
@@ -8,6 +10,12 @@ const START_TIME = Date.now();
 startHealthChecks();
 
 const PORT = process.env.PORT || 7000;
+const SERVER_BASE = (
+  process.env.RENDER_EXTERNAL_URL ||
+  process.env.SERVER_URL ||
+  `http://localhost:${PORT}`
+).replace(/\/$/, '');
+
 const app = express();
 
 app.use(getRouter(addonInterface));
@@ -104,6 +112,79 @@ app.get('/health', (req, res) => {
     },
   });
 });
+
+// ── HLS proxy ────────────────────────────────────────────────────────────────
+// Stremio fetches HLS manifests and segments through these routes so that
+// the CDN always receives the required Referer/Origin headers.
+
+const PROXY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+function decodeProxy(encoded) {
+  try { return JSON.parse(Buffer.from(encoded, 'base64url').toString()); }
+  catch { return null; }
+}
+
+// Proxy an HLS manifest (.m3u8): fetches with Referer, rewrites URIs back through us.
+app.get('/hls/:encoded', async (req, res) => {
+  const data = decodeProxy(req.params.encoded);
+  if (!data?.u) return res.status(400).send('Bad request');
+  try {
+    const upstream = await axios.get(data.u, {
+      headers: {
+        'User-Agent': PROXY_UA,
+        ...(data.r ? { Referer: data.r, Origin: 'https://brightpathsignals.com' } : {}),
+      },
+      timeout: 10000, responseType: 'text', maxRedirects: 5,
+      validateStatus: s => s < 500,
+    });
+    if (upstream.status !== 200) return res.status(upstream.status).send('CDN error');
+
+    const base = data.u.substring(0, data.u.lastIndexOf('/') + 1);
+    const ref  = data.r || '';
+    const body = upstream.data.split('\n').map(line => {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) return line;
+      const abs = t.startsWith('http') ? t : base + t;
+      const enc = Buffer.from(JSON.stringify({ u: abs, r: ref })).toString('base64url');
+      return (abs.includes('.m3u8') ? `${SERVER_BASE}/hls/` : `${SERVER_BASE}/seg/`) + enc;
+    }).join('\n');
+
+    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+    res.set('Cache-Control', 'no-cache');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.send(body);
+  } catch (err) {
+    console.error('[proxy/hls]', err.message);
+    res.status(502).send('Proxy error');
+  }
+});
+
+// Proxy an HLS segment (.ts / .aac / etc.): streams bytes from CDN with Referer.
+app.get('/seg/:encoded', async (req, res) => {
+  const data = decodeProxy(req.params.encoded);
+  if (!data?.u) return res.status(400).send('Bad request');
+  try {
+    const upstream = await axios.get(data.u, {
+      headers: {
+        'User-Agent': PROXY_UA,
+        ...(data.r ? { Referer: data.r, Origin: 'https://brightpathsignals.com' } : {}),
+        ...(req.headers.range ? { Range: req.headers.range } : {}),
+      },
+      timeout: 30000, responseType: 'stream', maxRedirects: 5,
+    });
+    res.status(upstream.status);
+    ['content-type', 'content-length', 'content-range'].forEach(h => {
+      if (upstream.headers[h]) res.set(h, upstream.headers[h]);
+    });
+    res.set('Access-Control-Allow-Origin', '*');
+    req.on('close', () => upstream.data.destroy());
+    upstream.data.pipe(res);
+  } catch (err) {
+    console.error('[proxy/seg]', err.message);
+    if (!res.headersSent) res.status(502).send('Proxy error');
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
