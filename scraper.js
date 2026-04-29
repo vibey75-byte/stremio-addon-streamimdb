@@ -5,7 +5,7 @@ const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vap
 const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 15 * 60 * 1000; // 15min
-const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 3;
+const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
 
 const cache   = new Map();
 const pending = new Map();
