@@ -125,7 +125,12 @@ function decodeProxy(encoded) {
 }
 
 // Proxy an HLS manifest (.m3u8): fetches with Referer, rewrites URIs back through us.
-app.get('/hls/:encoded', async (req, res) => {
+app.all('/hls/:encoded', async (req, res) => {
+  if (req.method === 'HEAD') {
+    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+    res.set('Access-Control-Allow-Origin', '*');
+    return res.status(200).end();
+  }
   const data = decodeProxy(req.params.encoded);
   if (!data?.u) return res.status(400).send('Bad request');
   try {
@@ -160,7 +165,12 @@ app.get('/hls/:encoded', async (req, res) => {
 });
 
 // Proxy an HLS segment (.ts / .aac / etc.): streams bytes from CDN with Referer.
-app.get('/seg/:encoded', async (req, res) => {
+app.all('/seg/:encoded', async (req, res) => {
+  if (req.method === 'HEAD') {
+    res.set('Content-Type', 'video/MP2T');
+    res.set('Access-Control-Allow-Origin', '*');
+    return res.status(200).end();
+  }
   const data = decodeProxy(req.params.encoded);
   if (!data?.u) return res.status(400).send('Bad request');
   try {
