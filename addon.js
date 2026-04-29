@@ -62,13 +62,23 @@ builder.defineStreamHandler(async (args) => {
 
     if (result && result.type === 'direct') {
       const best = result.streams[0];
+      const qualityLabel = type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality;
+      const binge = type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined;
       return {
-        streams: [{
-          url: makeHlsProxyUrl(best.url, referer),
-          name:  'StreamIMDb',
-          title: type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality,
-          behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
-        }]
+        streams: [
+          {
+            url:   makeHlsProxyUrl(best.url, referer),
+            name:  'StreamIMDb',
+            title: qualityLabel,
+            behaviorHints: binge,
+          },
+          {
+            url:   best.url,
+            name:  'StreamIMDb',
+            title: `${qualityLabel} · Direct`,
+            behaviorHints: binge,
+          },
+        ]
       };
     }
 
