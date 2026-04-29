@@ -1,7 +1,6 @@
 'use strict';
 const { addonBuilder } = require('stremio-addon-sdk');
 const { fetchVideoSource } = require('./scraper');
-const requestCtx = require('./context');
 
 const BRIGHTPATH_BASE = 'https://brightpathsignals.com/embed';
 const PORT = process.env.PORT || 7000;
@@ -63,19 +62,12 @@ builder.defineStreamHandler(async (args) => {
 
     if (result && result.type === 'direct') {
       const best = result.streams[0];
-      const qualityLabel = type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality;
-      const binge = type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined;
-
-      const { ua = '' } = requestCtx.getStore() || {};
-      const isNuvio = /nuvio/i.test(ua);
-      const streamUrl = isNuvio ? best.url : makeHlsProxyUrl(best.url, referer);
-
       return {
         streams: [{
-          url:  streamUrl,
-          name: 'StreamIMDb',
-          title: qualityLabel,
-          behaviorHints: binge,
+          url:   makeHlsProxyUrl(best.url, referer),
+          name:  'StreamIMDb',
+          title: type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality,
+          behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         }]
       };
     }
