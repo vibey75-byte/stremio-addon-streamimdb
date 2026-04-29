@@ -67,10 +67,7 @@ builder.defineStreamHandler(async (args) => {
           url: makeHlsProxyUrl(best.url, referer),
           name:  'StreamIMDb',
           title: type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality,
-          behaviorHints: {
-            notWebReady: true,
-            ...(type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : {}),
-          },
+          behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
         }]
       };
     }
