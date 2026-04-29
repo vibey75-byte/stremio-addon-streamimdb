@@ -204,6 +204,13 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
   return streams ? { streams, type: 'direct' } : null;
 }
 
+function invalidateCache(imdbId, type, season, episode) {
+  const key = cacheKey(imdbId, type, season, episode);
+  const had = cache.delete(key);
+  if (had) console.log(`[cache] Invalidado: ${key}`);
+  return had;
+}
+
 function getStatus() {
   const now = Date.now();
   const entries = [];
@@ -217,4 +224,4 @@ function getStatus() {
   };
 }
 
-module.exports = { fetchVideoSource, getStatus };
+module.exports = { fetchVideoSource, getStatus, invalidateCache };

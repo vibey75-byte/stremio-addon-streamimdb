@@ -3,7 +3,7 @@ const express = require('express');
 const axios   = require('axios');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
-const { getStatus } = require('./scraper');
+const { getStatus, fetchVideoSource, invalidateCache } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
 
 const START_TIME = Date.now();
@@ -132,7 +132,28 @@ function decodeProxy(encoded) {
   catch { return null; }
 }
 
+function parseRefererMeta(referer) {
+  if (!referer) return null;
+  const tv = referer.match(/\/embed\/tv\/(tt\d+)\/(\d+)\/(\d+)/);
+  if (tv) return { imdbId: tv[1], type: 'series', season: tv[2], episode: tv[3] };
+  const mv = referer.match(/\/embed\/movie\/(tt\d+)/);
+  if (mv) return { imdbId: mv[1], type: 'movie', season: null, episode: null };
+  return null;
+}
+
+function fetchManifest(url, referer) {
+  return axios.get(url, {
+    headers: {
+      'User-Agent': PROXY_UA,
+      ...(referer ? { Referer: referer, Origin: 'https://brightpathsignals.com' } : {}),
+    },
+    timeout: 10000, responseType: 'text', maxRedirects: 5,
+    validateStatus: s => s < 500,
+  });
+}
+
 // Proxy an HLS manifest (.m3u8): fetches with Referer, rewrites URIs back through us.
+// On upstream failure (5xx/timeout) tries one cache-invalidating refresh via the scraper.
 app.all('/hls/:encoded.m3u8', async (req, res) => {
   if (req.method === 'HEAD' || req.method === 'OPTIONS') {
     res.set('Content-Type', 'application/x-mpegURL');
@@ -143,37 +164,53 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
   }
   const data = decodeProxy(req.params.encoded);
   if (!data?.u) return res.status(400).send('Bad request');
+
+  let manifestUrl = data.u;
+  let upstream = null;
+
   try {
-    const upstream = await axios.get(data.u, {
-      headers: {
-        'User-Agent': PROXY_UA,
-        ...(data.r ? { Referer: data.r, Origin: 'https://brightpathsignals.com' } : {}),
-      },
-      timeout: 10000, responseType: 'text', maxRedirects: 5,
-      validateStatus: s => s < 500,
-    });
-    if (upstream.status !== 200) return res.status(upstream.status).send('CDN error');
-
-    const base = data.u.substring(0, data.u.lastIndexOf('/') + 1);
-    const ref  = data.r || '';
-    const body = upstream.data.split('\n').map(line => {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) return line;
-      const abs = t.startsWith('http') ? t : base + t;
-      const enc = Buffer.from(JSON.stringify({ u: abs, r: ref })).toString('base64url');
-      return abs.includes('.m3u8')
-        ? `${SERVER_BASE}/hls/${enc}.m3u8`
-        : `${SERVER_BASE}/seg/${enc}.ts`;
-    }).join('\n');
-
-    res.set('Content-Type', 'application/x-mpegURL');
-    res.set('Cache-Control', 'no-cache');
-    res.set('Access-Control-Allow-Origin', '*');
-    res.send(body);
+    upstream = await fetchManifest(manifestUrl, data.r);
   } catch (err) {
-    console.error('[proxy/hls]', err.message);
-    res.status(502).send('Proxy error');
+    console.error('[proxy/hls] upstream falhou:', err.message);
+    const meta = parseRefererMeta(data.r);
+    if (meta) {
+      invalidateCache(meta.imdbId, meta.type, meta.season, meta.episode);
+      try {
+        const fresh = await fetchVideoSource(meta.imdbId, meta.type, meta.season, meta.episode);
+        const url = fresh?.streams?.[0]?.url;
+        if (url && url !== manifestUrl) {
+          console.log('[proxy/hls] refresh ok — novo URL adquirido');
+          manifestUrl = url;
+          upstream = await fetchManifest(manifestUrl, data.r).catch(e => {
+            console.error('[proxy/hls] refresh upstream falhou:', e.message);
+            return null;
+          });
+        }
+      } catch (e) {
+        console.error('[proxy/hls] refresh erro:', e.message);
+      }
+    }
+    if (!upstream) return res.status(502).send('Proxy error');
   }
+
+  if (upstream.status !== 200) return res.status(upstream.status).send('CDN error');
+
+  const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
+  const ref  = data.r || '';
+  const body = upstream.data.split('\n').map(line => {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) return line;
+    const abs = t.startsWith('http') ? t : base + t;
+    const enc = Buffer.from(JSON.stringify({ u: abs, r: ref })).toString('base64url');
+    return abs.includes('.m3u8')
+      ? `${SERVER_BASE}/hls/${enc}.m3u8`
+      : `${SERVER_BASE}/seg/${enc}.ts`;
+  }).join('\n');
+
+  res.set('Content-Type', 'application/x-mpegURL');
+  res.set('Cache-Control', 'no-cache');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.send(body);
 });
 
 // Proxy an HLS segment (.ts / .aac / etc.): streams bytes from CDN with Referer.
