@@ -61,16 +61,17 @@ builder.defineStreamHandler(async (args) => {
     }
 
     if (result && result.type === 'direct') {
+      const best = result.streams[0];
       return {
-        streams: result.streams.map(({ url, quality }) => ({
-          url: makeHlsProxyUrl(url, referer),
+        streams: [{
+          url: makeHlsProxyUrl(best.url, referer),
           name:  'StreamIMDb',
-          title: type === 'series' ? `S${season}E${episode} · ${quality}` : quality,
+          title: type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality,
           behaviorHints: {
             notWebReady: true,
             ...(type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : {}),
           },
-        }))
+        }]
       };
     }
 
