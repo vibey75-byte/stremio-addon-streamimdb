@@ -62,9 +62,12 @@ builder.defineStreamHandler(async (args) => {
 
     if (result && result.type === 'direct') {
       const best = result.streams[0];
+      const streamUrl = best.proxyable === false
+        ? best.url
+        : makeHlsProxyUrl(best.url, referer);
       return {
         streams: [{
-          url:   makeHlsProxyUrl(best.url, referer),
+          url:   streamUrl,
           name:  'StreamIMDb',
           title: type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality,
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
