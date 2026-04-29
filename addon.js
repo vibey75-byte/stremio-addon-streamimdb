@@ -27,7 +27,7 @@ const builder = new addonBuilder(manifest);
 
 function makeHlsProxyUrl(streamUrl, referer) {
   const encoded = Buffer.from(JSON.stringify({ u: streamUrl, r: referer })).toString('base64url');
-  return `${SERVER_BASE}/hls/${encoded}`;
+  return `${SERVER_BASE}/hls/${encoded}.m3u8`;
 }
 
 builder.defineStreamHandler(async (args) => {

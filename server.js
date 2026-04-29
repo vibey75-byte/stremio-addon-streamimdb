@@ -142,7 +142,7 @@ function decodeProxy(encoded) {
 }
 
 // Proxy an HLS manifest (.m3u8): fetches with Referer, rewrites URIs back through us.
-app.all('/hls/:encoded', async (req, res) => {
+app.all('/hls/:encoded.m3u8', async (req, res) => {
   if (req.method === 'HEAD' || req.method === 'OPTIONS') {
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Access-Control-Allow-Origin', '*');
@@ -170,7 +170,9 @@ app.all('/hls/:encoded', async (req, res) => {
       if (!t || t.startsWith('#')) return line;
       const abs = t.startsWith('http') ? t : base + t;
       const enc = Buffer.from(JSON.stringify({ u: abs, r: ref })).toString('base64url');
-      return (abs.includes('.m3u8') ? `${SERVER_BASE}/hls/` : `${SERVER_BASE}/seg/`) + enc;
+      return abs.includes('.m3u8')
+        ? `${SERVER_BASE}/hls/${enc}.m3u8`
+        : `${SERVER_BASE}/seg/${enc}.ts`;
     }).join('\n');
 
     res.set('Content-Type', 'application/x-mpegURL');
@@ -184,7 +186,7 @@ app.all('/hls/:encoded', async (req, res) => {
 });
 
 // Proxy an HLS segment (.ts / .aac / etc.): streams bytes from CDN with Referer.
-app.all('/seg/:encoded', async (req, res) => {
+app.all('/seg/:encoded.ts', async (req, res) => {
   if (req.method === 'HEAD' || req.method === 'OPTIONS') {
     res.set('Content-Type', 'video/MP2T');
     res.set('Access-Control-Allow-Origin', '*');
