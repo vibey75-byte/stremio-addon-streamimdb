@@ -1,10 +1,15 @@
 'use strict';
 const express = require('express');
 const axios   = require('axios');
+const http    = require('http');
+const https   = require('https');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus, fetchVideoSource, invalidateCache } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
+
+const httpAgent  = new http.Agent({  keepAlive: true, maxSockets: 64 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 
 const START_TIME = Date.now();
 startHealthChecks();
@@ -149,6 +154,7 @@ function fetchManifest(url, referer) {
     },
     timeout: 10000, responseType: 'text', maxRedirects: 5,
     validateStatus: s => s < 500,
+    httpAgent, httpsAgent,
   });
 }
 
@@ -233,13 +239,23 @@ app.all('/seg/:encoded.ts', async (req, res) => {
         ...(req.headers.range ? { Range: req.headers.range } : {}),
       },
       timeout: 30000, responseType: 'stream', maxRedirects: 5,
+      httpAgent, httpsAgent,
     });
     res.status(upstream.status);
-    ['content-type', 'content-length', 'content-range'].forEach(h => {
+    ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control'].forEach(h => {
       if (upstream.headers[h]) res.set(h, upstream.headers[h]);
     });
+    if (!upstream.headers['accept-ranges']) res.set('Accept-Ranges', 'bytes');
     res.set('Access-Control-Allow-Origin', '*');
-    req.on('close', () => upstream.data.destroy());
+
+    let closed = false;
+    req.on('close', () => { closed = true; upstream.data.destroy(); });
+    upstream.data.on('error', (e) => {
+      if (closed) return;
+      console.error('[proxy/seg] upstream stream error:', e.message);
+      if (!res.headersSent) res.status(502).end();
+      else res.end();
+    });
     upstream.data.pipe(res);
   } catch (err) {
     console.error('[proxy/seg]', err.message);
