@@ -5,6 +5,7 @@ const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
+const requestCtx = require('./context');
 
 const START_TIME = Date.now();
 startHealthChecks();
@@ -17,6 +18,14 @@ const SERVER_BASE = (
 ).replace(/\/$/, '');
 
 const app = express();
+
+app.use((req, res, next) => {
+  const ua = req.headers['user-agent'] || '';
+  if (req.path.startsWith('/stream/')) {
+    console.log(`[client] ${req.path} — UA: ${ua}`);
+  }
+  requestCtx.run({ ua }, next);
+});
 
 app.use(getRouter(addonInterface));
 
