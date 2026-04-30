@@ -35,8 +35,9 @@ Porta ocupada: `powershell -Command "$c=Get-NetTCPConnection -LocalPort 7000 -EA
 | Variável | Default |
 |---|---|
 | `VAPLAYER_API_URL` | `https://streamdata.vaplayer.ru/api.php` |
-| `CACHE_TTL_MS` | `900000` (15min) |
+| `CACHE_TTL_MS` | `300000` (5min) |
 | `MAX_QUEUE` | `3` |
+| `MAX_SEG_RETRIES` | `1` (retries on 502/403) |
 | `HEALTH_CHECK_INTERVAL_MS` | `300000` (5min) |
 | `ALERT_WEBHOOK` | — (Slack/Discord webhook) |
 | `ALERT_EMAIL` | — (requer nodemailer) |

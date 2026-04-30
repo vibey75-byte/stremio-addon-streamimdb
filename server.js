@@ -5,7 +5,7 @@ const http    = require('http');
 const https   = require('https');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
-const { getStatus, fetchVideoSource, invalidateCache } = require('./scraper');
+const { getStatus, fetchVideoSource, invalidateCache, cacheKey } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
 
 const httpAgent  = new http.Agent({  keepAlive: true, maxSockets: 64 });
@@ -158,6 +158,77 @@ function fetchManifest(url, referer) {
   });
 }
 
+// ── Segment retry: fresh base URL cache ──────────────────────────────────────
+const FRESH_BASE_TTL = 60 * 1000; // 60s
+const freshBases = new Map();
+
+async function refreshBase(imdbId, type, season, episode, referer) {
+  const key = cacheKey(imdbId, type, season, episode);
+
+  // Cleanup stale entries if cache grows too large
+  if (freshBases.size > 50) {
+    const now = Date.now();
+    for (const [k, v] of freshBases) {
+      if (now - v.timestamp > FRESH_BASE_TTL) freshBases.delete(k);
+    }
+  }
+
+  // Check fresh base cache
+  const cached = freshBases.get(key);
+  if (cached && Date.now() - cached.timestamp < FRESH_BASE_TTL) {
+    console.log(`[proxy/seg] freshBase cache hit: ${key}`);
+    return cached.base;
+  }
+
+  // Invalidate scraper cache and get fresh stream URL
+  invalidateCache(imdbId, type, season, episode);
+  const fresh = await fetchVideoSource(imdbId, type, season, episode);
+  const streamUrl = fresh?.streams?.[0]?.url;
+  if (!streamUrl) return null;
+
+  // Fetch the manifest to determine the base
+  let manifestUrl = streamUrl;
+  let manifestRes;
+  try {
+    manifestRes = await fetchManifest(manifestUrl, referer);
+  } catch { return null; }
+
+  if (manifestRes.status !== 200) return null;
+
+  const body = typeof manifestRes.data === 'string' ? manifestRes.data : '';
+
+  // If it's a master playlist, fetch the best variant sub-playlist
+  if (body.includes('#EXT-X-STREAM-INF:')) {
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
+      const urlLine = lines[i + 1]?.trim();
+      if (!urlLine || urlLine.startsWith('#')) continue;
+      const variantUrl = urlLine.startsWith('http')
+        ? urlLine
+        : manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1) + urlLine;
+      try {
+        const variantRes = await fetchManifest(variantUrl, referer);
+        if (variantRes.status === 200) {
+          const newBase = variantUrl.substring(0, variantUrl.lastIndexOf('/') + 1);
+          freshBases.set(key, { base: newBase, timestamp: Date.now() });
+          console.log(`[proxy/seg] freshBase refreshed (variant): ${key}`);
+          return newBase;
+        }
+      } catch { /* try next variant */ }
+    }
+    return null;
+  }
+
+  // Media playlist — base is the directory of the manifest URL
+  const newBase = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
+  freshBases.set(key, { base: newBase, timestamp: Date.now() });
+  console.log(`[proxy/seg] freshBase refreshed (media): ${key}`);
+  return newBase;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Proxy an HLS manifest (.m3u8): fetches with Referer, rewrites URIs back through us.
 // On upstream failure (5xx/timeout) tries one cache-invalidating refresh via the scraper.
 app.all('/hls/:encoded.m3u8', async (req, res) => {
@@ -207,7 +278,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     const t = line.trim();
     if (!t || t.startsWith('#')) return line;
     const abs = t.startsWith('http') ? t : base + t;
-    const enc = Buffer.from(JSON.stringify({ u: abs, r: ref })).toString('base64url');
+    const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
     return abs.includes('.m3u8')
       ? `${SERVER_BASE}/hls/${enc}.m3u8`
       : `${SERVER_BASE}/seg/${enc}.ts`;
@@ -220,6 +291,8 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 });
 
 // Proxy an HLS segment (.ts / .aac / etc.): streams bytes from CDN with Referer.
+// On upstream failure (5xx/timeout/403), tries one refresh via scraper to get a
+// fresh CDN base URL and retries the segment with the new token.
 app.all('/seg/:encoded.ts', async (req, res) => {
   if (req.method === 'HEAD' || req.method === 'OPTIONS') {
     res.set('Content-Type', 'video/MP2T');
@@ -231,35 +304,65 @@ app.all('/seg/:encoded.ts', async (req, res) => {
   }
   const data = decodeProxy(req.params.encoded);
   if (!data?.u) return res.status(400).send('Bad request');
-  try {
-    const upstream = await axios.get(data.u, {
-      headers: {
-        'User-Agent': PROXY_UA,
-        ...(data.r ? { Referer: data.r, Origin: 'https://brightpathsignals.com' } : {}),
-        ...(req.headers.range ? { Range: req.headers.range } : {}),
-      },
-      timeout: 30000, responseType: 'stream', maxRedirects: 5,
-      httpAgent, httpsAgent,
-    });
-    res.status(upstream.status);
-    ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control'].forEach(h => {
-      if (upstream.headers[h]) res.set(h, upstream.headers[h]);
-    });
-    if (!upstream.headers['accept-ranges']) res.set('Accept-Ranges', 'bytes');
-    res.set('Access-Control-Allow-Origin', '*');
 
-    let closed = false;
-    req.on('close', () => { closed = true; upstream.data.destroy(); });
-    upstream.data.on('error', (e) => {
-      if (closed) return;
-      console.error('[proxy/seg] upstream stream error:', e.message);
-      if (!res.headersSent) res.status(502).end();
-      else res.end();
-    });
-    upstream.data.pipe(res);
-  } catch (err) {
-    console.error('[proxy/seg]', err.message);
-    if (!res.headersSent) res.status(502).send('Proxy error');
+  const MAX_SEG_RETRIES = parseInt(process.env.MAX_SEG_RETRIES) || 1;
+  let segmentUrl = data.u;
+  const referer  = data.r || '';
+  const oldBase  = data.b || '';
+
+  for (let attempt = 0; attempt <= MAX_SEG_RETRIES; attempt++) {
+    try {
+      const upstream = await axios.get(segmentUrl, {
+        headers: {
+          'User-Agent': PROXY_UA,
+          ...(referer ? { Referer: referer, Origin: 'https://brightpathsignals.com' } : {}),
+          ...(req.headers.range ? { Range: req.headers.range } : {}),
+        },
+        timeout: 30000, responseType: 'stream', maxRedirects: 5,
+        httpAgent, httpsAgent,
+      });
+      res.status(upstream.status);
+      ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control'].forEach(h => {
+        if (upstream.headers[h]) res.set(h, upstream.headers[h]);
+      });
+      if (!upstream.headers['accept-ranges']) res.set('Accept-Ranges', 'bytes');
+      res.set('Access-Control-Allow-Origin', '*');
+
+      let closed = false;
+      req.on('close', () => { closed = true; upstream.data.destroy(); });
+      upstream.data.on('error', (e) => {
+        if (closed) return;
+        console.error('[proxy/seg] upstream stream error:', e.message);
+        if (!res.headersSent) res.status(502).end();
+        else res.end();
+      });
+      upstream.data.pipe(res);
+      return; // success
+    } catch (err) {
+      const status = err.response?.status;
+      const retryable = !status || status === 403 || status >= 502;
+      console.error(`[proxy/seg] attempt ${attempt + 1}/${MAX_SEG_RETRIES + 1} failed (${status || 'network'}): ${err.message}`);
+
+      if (attempt < MAX_SEG_RETRIES && retryable && oldBase && segmentUrl.startsWith(oldBase)) {
+        const meta = parseRefererMeta(referer);
+        if (meta) {
+          try {
+            const newBase = await refreshBase(meta.imdbId, meta.type, meta.season, meta.episode, referer);
+            if (newBase && newBase !== oldBase) {
+              const relativePath = segmentUrl.slice(oldBase.length);
+              segmentUrl = newBase + relativePath;
+              console.log(`[proxy/seg] retry ${attempt + 1} with refreshed base`);
+              continue;
+            }
+          } catch (e) {
+            console.error('[proxy/seg] refreshBase failed:', e.message);
+          }
+        }
+      }
+
+      if (!res.headersSent) res.status(502).send('Proxy error');
+      return;
+    }
   }
 });
 // ─────────────────────────────────────────────────────────────────────────────
