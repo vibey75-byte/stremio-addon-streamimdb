@@ -62,7 +62,9 @@ builder.defineStreamHandler(async (args) => {
 
     if (result && result.type === 'direct') {
       const best = result.streams[0];
-      const streamUrl = best.proxyable === false
+      // Series: always direct — series CDNs block Render datacenter IPs for segments.
+      // Movies: proxy adds Referer header which fixes buffering on movie CDNs.
+      const streamUrl = (best.proxyable === false || type === 'series')
         ? best.url
         : makeHlsProxyUrl(best.url, referer);
       return {
