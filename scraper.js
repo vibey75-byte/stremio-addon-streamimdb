@@ -146,6 +146,13 @@ async function doFetch(imdbId, type, season, episode) {
     return null;
   }
 
+  // Séries: não pré-fetchar — CDNs de séries usam URLs tokenizados que ficam inválidos
+  // se consumidos por um IP de datacenter antes de o Stremio os usar.
+  if (type === 'series') {
+    console.log('[scraper] Série — a devolver URL directo sem pré-fetch');
+    return [{ url: streamUrls[0], quality: 'Auto' }];
+  }
+
   const results = await Promise.all(streamUrls.map(u => resolveStream(u, referer)));
   const best = results.find(r => r?.verified) || results.find(r => r && !r.verified);
 
