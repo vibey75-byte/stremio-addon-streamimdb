@@ -1,5 +1,6 @@
 'use strict';
 const axios = require('axios');
+const { fetchFromProviders } = require('./providers');
 
 const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
 const BRIGHTPATH_BASE  = 'https://brightpathsignals.com/embed';
@@ -211,7 +212,21 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
     });
 
   pending.set(key, fetchPromise);
-  const streams = await fetchPromise;
+  let streams = await fetchPromise;
+
+  if (!streams) {
+    console.log('[scraper] Provider principal falhou — a tentar movie-web providers...');
+    try {
+      streams = await fetchFromProviders(imdbId, type, season, episode);
+      if (streams) {
+        console.log('[scraper] Providers fallback OK');
+        setCached(key, streams);
+      }
+    } catch (e) {
+      console.log('[scraper] Providers fallback falhou:', e.message);
+    }
+  }
+
   return streams ? { streams, type: 'direct' } : null;
 }
 
