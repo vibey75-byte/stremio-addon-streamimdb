@@ -75,13 +75,26 @@ app.get('/', (req, res) => {
     .tip strong { color: #bbb; }
     .footer { margin-top: 24px; font-size: 0.75rem; color: #444; text-align: center; }
     .footer a { color: #666; text-decoration: none; }
+    .update-banner {
+      display: none; align-items: center; gap: 10px;
+      background: #1a2e1a; border: 1px solid #2d5a2d; border-radius: 10px;
+      padding: 12px 16px; margin-bottom: 16px; font-size: 0.88rem; color: #7ec87e;
+    }
+    .update-banner a { color: #a8e6a8; font-weight: 600; text-decoration: none; }
+    .update-banner a:hover { text-decoration: underline; }
+    .update-dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; flex-shrink: 0; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
   </style>
 </head>
 <body>
   <div class="card">
+    <div class="update-banner" id="update-banner">
+      <span class="update-dot"></span>
+      <span>New version available: <a id="update-link" href="#" target="_blank"></a> &mdash; <a href="#">reinstall to update</a></span>
+    </div>
     <img class="logo" src="https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png" alt="icon">
     <h1>StreamIMDb Connector</h1>
-    <div class="version">v1.1.1 &nbsp;·&nbsp; Movies &amp; Series</div>
+    <div class="version">v1.2.0 &nbsp;·&nbsp; Movies &amp; Series</div>
     <p>Stream movies and series natively inside Stremio — no browser required.</p>
     <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
     <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
@@ -99,6 +112,16 @@ app.get('/', (req, res) => {
   </div>
   <script>
     document.getElementById('install-btn').href = 'stremio://' + window.location.host + '/manifest.json';
+    fetch('/version-check').then(function(r){ return r.json(); }).then(function(d) {
+      if (d.outdated && d.latest) {
+        var banner = document.getElementById('update-banner');
+        var link   = document.getElementById('update-link');
+        link.textContent = 'v' + d.latest;
+        link.href = d.url || 'https://github.com/F100Pilot/stremio-addon-streamimdb/releases';
+        banner.querySelector('a:last-child').href = 'stremio://' + window.location.host + '/manifest.json';
+        banner.style.display = 'flex';
+      }
+    }).catch(function(){});
     document.getElementById('report-btn').addEventListener('click', function(e) {
       e.preventDefault();
       const msg = document.getElementById('msg').value.trim();
@@ -110,11 +133,41 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
+// ── Version check ───────────────────────────────────────────────────────────
+const CURRENT_VERSION = '1.2.0';
+const GH_RELEASES_URL = 'https://api.github.com/repos/F100Pilot/stremio-addon-streamimdb/releases/latest';
+let _versionCache = null;
+let _versionCacheTs = 0;
+const VERSION_CACHE_TTL = 60 * 60 * 1000; // 1h
+
+app.get('/version-check', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  try {
+    const now = Date.now();
+    if (!_versionCache || now - _versionCacheTs > VERSION_CACHE_TTL) {
+      const ghRes = await axios.get(GH_RELEASES_URL, {
+        headers: { 'User-Agent': 'stremio-addon-streamimdb', Accept: 'application/vnd.github+json' },
+        timeout: 5000,
+      });
+      _versionCache = {
+        latest: (ghRes.data.tag_name || '').replace(/^v/, ''),
+        url: ghRes.data.html_url || 'https://github.com/F100Pilot/stremio-addon-streamimdb/releases',
+      };
+      _versionCacheTs = now;
+    }
+    const isOutdated = _versionCache.latest && _versionCache.latest !== CURRENT_VERSION;
+    res.json({ current: CURRENT_VERSION, latest: _versionCache.latest, outdated: isOutdated, url: _versionCache.url });
+  } catch {
+    res.json({ current: CURRENT_VERSION, latest: null, outdated: false, url: null });
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.get('/health', (req, res) => {
   const mem = process.memoryUsage();
   res.json({
     status: 'ok',
-    version: '1.1.1',
+    version: '1.2.0',
     uptimeSeconds: Math.floor((Date.now() - START_TIME) / 1000),
     scraper: getStatus(),
     health: getHealthStatus(),

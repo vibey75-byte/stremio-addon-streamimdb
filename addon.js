@@ -12,7 +12,7 @@ const SERVER_BASE = (
 
 const manifest = {
   id: 'org.local.streamimdb',
-  version: '1.1.1',
+  version: '1.2.0',
   name: 'StreamIMDb Connector',
   description: 'Stream movies and series via streamimdb.me natively inside Stremio.',
   logo: 'https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png',
@@ -61,20 +61,20 @@ builder.defineStreamHandler(async (args) => {
     }
 
     if (result && result.type === 'direct') {
-      const best = result.streams[0];
       // Series: always direct — series CDNs block Render datacenter IPs for segments.
       // Movies: proxy adds Referer header which fixes buffering on movie CDNs.
-      const streamUrl = (best.proxyable === false || type === 'series')
-        ? best.url
-        : makeHlsProxyUrl(best.url, referer);
-      return {
-        streams: [{
+      const streams = result.streams.map(s => {
+        const streamUrl = (s.proxyable === false || type === 'series')
+          ? s.url
+          : makeHlsProxyUrl(s.url, referer);
+        return {
           url:   streamUrl,
           name:  'StreamIMDb',
-          title: type === 'series' ? `S${season}E${episode} · ${best.quality}` : best.quality,
+          title: type === 'series' ? `S${season}E${episode} · ${s.quality}` : s.quality,
           behaviorHints: type === 'series' ? { bingeGroup: `streamimdb-${imdbId}` } : undefined,
-        }]
-      };
+        };
+      });
+      return { streams };
     }
 
     return {
