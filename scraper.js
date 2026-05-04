@@ -81,7 +81,11 @@ function parseMasterPlaylist(body, masterUrl) {
 //   verified=false → CDN respondeu 4xx (stream provavelmente funciona)
 //   null           → CDN inacessível (timeout / 5xx)
 async function resolveStream(m3u8Url, referer) {
-  for (const headers of [{ 'User-Agent': UA, Referer: referer }, { 'User-Agent': UA }]) {
+  for (const headers of [
+    { 'User-Agent': UA, Referer: referer, Origin: 'https://brightpathsignals.com' },
+    { 'User-Agent': UA, Referer: referer },
+    { 'User-Agent': UA },
+  ]) {
     try {
       const res = await axios.get(m3u8Url, {
         headers,
