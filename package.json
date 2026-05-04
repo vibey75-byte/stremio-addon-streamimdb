@@ -7,6 +7,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@movie-web/providers": "^2.4.13",
     "axios": "^1.7.2",
     "stremio-addon-sdk": "^1.6.10"
   }
