@@ -151,12 +151,12 @@ async function doFetch(imdbId, type, season, episode) {
 
   if (!best) {
     console.log('[scraper] Todas as fontes inacessíveis — a usar primeira como último recurso');
-    return [{ url: streamUrls[0], quality: 'Auto', proxyable: false }];
+    return [{ url: streamUrls[0], quality: 'Auto' }];
   }
 
   if (!best.verified || !best.body) {
-    console.log('[scraper] Fonte acessível (CDN bloqueou pré-fetch)');
-    return [{ url: best.url, quality: 'Auto', proxyable: false }];
+    console.log('[scraper] Fonte acessível (CDN bloqueou pré-fetch) — a proxy para adicionar headers');
+    return [{ url: best.url, quality: 'Auto' }];
   }
 
   const variants = parseMasterPlaylist(best.body, best.url);

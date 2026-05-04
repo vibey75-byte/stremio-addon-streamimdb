@@ -64,7 +64,7 @@ builder.defineStreamHandler(async (args) => {
       // Series: always direct — series CDNs block Render datacenter IPs for segments.
       // Movies: proxy adds Referer header which fixes buffering on movie CDNs.
       const streams = result.streams.map(s => {
-        const streamUrl = (s.proxyable === false || type === 'series')
+        const streamUrl = s.proxyable === false
           ? s.url
           : makeHlsProxyUrl(s.url, referer);
         return {
