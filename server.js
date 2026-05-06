@@ -5,7 +5,7 @@ const http    = require('http');
 const https   = require('https');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
-const { getStatus, fetchVideoSource, invalidateCache, cacheKey } = require('./scraper');
+const { getStatus, fetchVideoSource, invalidateCache, cacheKey, getMfCache } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
 
 const httpAgent  = new http.Agent({  keepAlive: true, maxSockets: 64 });
@@ -297,6 +297,26 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 
   let manifestUrl = data.u;
   let upstream = null;
+
+  const cachedBody = getMfCache(manifestUrl);
+  if (cachedBody) {
+    console.log('[proxy/hls] manifest servido do mfCache');
+    const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
+    const ref  = data.r || '';
+    const body = cachedBody.split('\n').map(line => {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) return line;
+      const abs = t.startsWith('http') ? t : base + t;
+      const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
+      return abs.includes('.m3u8')
+        ? `${SERVER_BASE}/hls/${enc}.m3u8`
+        : `${SERVER_BASE}/seg/${enc}.ts`;
+    }).join('\n');
+    res.set('Content-Type', 'application/x-mpegURL');
+    res.set('Cache-Control', 'no-cache');
+    res.set('Access-Control-Allow-Origin', '*');
+    return res.send(body);
+  }
 
   try {
     upstream = await fetchManifest(manifestUrl, data.r);

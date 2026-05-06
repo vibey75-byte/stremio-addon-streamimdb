@@ -12,6 +12,19 @@ const cache   = new Map();
 const pending = new Map();
 let activeScrapes = 0;
 
+const mfCache = new Map();
+const MF_TTL  = 3 * 60 * 1000; // 3 min
+
+function setMfCache(url, body) {
+  mfCache.set(url, { body, ts: Date.now() });
+  for (const [k, v] of mfCache) if (Date.now() - v.ts > MF_TTL) mfCache.delete(k);
+}
+function getMfCache(url) {
+  const e = mfCache.get(url);
+  if (!e || Date.now() - e.ts > MF_TTL) { mfCache.delete(url); return null; }
+  return e.body;
+}
+
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 function cacheKey(imdbId, type, season, episode) {
@@ -160,6 +173,7 @@ async function doFetch(imdbId, type, season, episode) {
     return [{ url: best.url, quality: 'Auto' }];
   }
 
+  setMfCache(best.url, best.body);
   const variants = parseMasterPlaylist(best.body, best.url);
   if (variants.length > 0) {
     console.log(`[scraper] ${variants.length} qualidade(s): ${variants.map(v => v.quality).join(', ')}`);
@@ -243,4 +257,4 @@ function getStatus() {
   };
 }
 
-module.exports = { fetchVideoSource, getStatus, invalidateCache, cacheKey };
+module.exports = { fetchVideoSource, getStatus, invalidateCache, cacheKey, getMfCache };
