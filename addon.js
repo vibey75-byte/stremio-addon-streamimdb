@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 7000;
 const SERVER_BASE = (
   process.env.RENDER_EXTERNAL_URL ||
   process.env.SERVER_URL ||
-  'https://stremio.thehouseofthemaster.pt'
+  `http://localhost:${PORT}`
 ).replace(/\/$/, '');
 
 const manifest = {
