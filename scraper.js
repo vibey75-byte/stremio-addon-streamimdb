@@ -78,7 +78,8 @@ function parseMasterPlaylist(body, masterUrl) {
     const urlLine = lines[i + 1]?.trim();
     if (!urlLine || urlLine.startsWith('#')) continue;
 
-    const url     = urlLine.startsWith('http') ? urlLine : base + urlLine;
+    let url;
+    try { url = new URL(urlLine, masterUrl).href; } catch { url = urlLine; }
     const quality = resolutionToQuality(resolution, bandwidth);
 
     if (!seen.has(quality)) {

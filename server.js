@@ -258,9 +258,7 @@ async function refreshBase(imdbId, type, season, episode, referer) {
       if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
       const urlLine = lines[i + 1]?.trim();
       if (!urlLine || urlLine.startsWith('#')) continue;
-      const variantUrl = urlLine.startsWith('http')
-        ? urlLine
-        : manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1) + urlLine;
+      let variantUrl; try { variantUrl = new URL(urlLine, manifestUrl).href; } catch { variantUrl = urlLine; }
       try {
         const variantRes = await fetchManifest(variantUrl, referer);
         if (variantRes.status === 200) {
@@ -306,7 +304,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     const body = cachedBody.split('\n').map(line => {
       const t = line.trim();
       if (!t || t.startsWith('#')) return line;
-      const abs = t.startsWith('http') ? t : base + t;
+      let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
       const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
       return abs.includes('.m3u8')
         ? `${SERVER_BASE}/hls/${enc}.m3u8`
@@ -350,7 +348,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
   const body = upstream.data.split('\n').map(line => {
     const t = line.trim();
     if (!t || t.startsWith('#')) return line;
-    const abs = t.startsWith('http') ? t : base + t;
+    let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
     const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
     return abs.includes('.m3u8')
       ? `${SERVER_BASE}/hls/${enc}.m3u8`
