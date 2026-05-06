@@ -176,8 +176,13 @@ async function doFetch(imdbId, type, season, episode) {
   setMfCache(best.url, best.body);
   const variants = parseMasterPlaylist(best.body, best.url);
   if (variants.length > 0) {
-    console.log(`[scraper] ${variants.length} qualidade(s): ${variants.map(v => v.quality).join(', ')}`);
-    return variants;
+    const top = variants[0]; // já ordenado por bandwidth desc — melhor qualidade
+    try {
+      const vr = await resolveStream(top.url, referer);
+      if (vr?.body) setMfCache(top.url, vr.body);
+    } catch (_) {}
+    console.log(`[scraper] melhor qualidade: ${top.quality}`);
+    return [{ url: top.url, quality: top.quality }];
   }
 
   console.log('[scraper] Fonte verificada (sem variantes)');
