@@ -25,6 +25,24 @@ const SERVER_BASE = (
   `http://localhost:${PORT}`
 ).replace(/\/$/, '');
 
+// Em serverless (Vercel) cada cold-start é um processo isolado. Sem estas
+// duas vars FIXAS nos Project Settings, o proxy parte-se de forma silenciosa:
+// - SERVER_URL em falta → cai para VERCEL_URL (domínio efémero por deployment,
+//   diferente do domínio estável instalado no Stremio) → tokens apontam para
+//   o host errado
+// - PROXY_SECRET em falta → cada instância gera um segredo aleatório próprio →
+//   a instância que assina o token (/stream) quase nunca é a mesma que o
+//   verifica (/hls, /seg) → verify() falha sempre → 400 silencioso → o player
+//   muda para LibVLC e fica preso sem mais nenhum pedido
+if (process.env.VERCEL) {
+  if (!process.env.SERVER_URL) {
+    console.warn(`[config] AVISO: SERVER_URL não definida — a usar ${SERVER_BASE} (domínio efémero do deployment). Define SERVER_URL=https://<o-teu-dominio-estavel>.vercel.app nos Project Settings → Environment Variables.`);
+  }
+  if (!process.env.PROXY_SECRET) {
+    console.warn('[config] AVISO CRÍTICO: PROXY_SECRET não definida — cada instância serverless gera um segredo aleatório próprio, o que faz a verificação dos tokens do proxy /hls e /seg falhar entre instâncias (reprodução fica presa). Gera um valor fixo com `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"` e define PROXY_SECRET nos Project Settings → Environment Variables.');
+  }
+}
+
 const app = express();
 
 // Enable gzip compression for faster manifest delivery
