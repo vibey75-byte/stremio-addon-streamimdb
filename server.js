@@ -1,5 +1,7 @@
 'use strict';
+require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const axios   = require('axios');
 const http    = require('http');
 const https   = require('https');
@@ -7,6 +9,7 @@ const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const { getStatus, fetchVideoSource, invalidateCache, cacheKey, getMfCache } = require('./scraper');
 const { startHealthChecks, getHealthStatus } = require('./health');
+const { sign, verify } = require('./proxy_token');
 
 const httpAgent  = new http.Agent({  keepAlive: true, maxSockets: 64 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
@@ -22,6 +25,9 @@ const SERVER_BASE = (
 ).replace(/\/$/, '');
 
 const app = express();
+
+// Enable gzip compression for faster manifest delivery
+app.use(compression());
 
 app.use(getRouter(addonInterface));
 
@@ -94,7 +100,7 @@ app.get('/', (req, res) => {
     </div>
     <img class="logo" src="https://raw.githubusercontent.com/F100Pilot/stremio-addon-streamimdb/main/icon.png" alt="icon">
     <h1>StreamIMDb Connector</h1>
-    <div class="version">v1.3.0 &nbsp;·&nbsp; Movies &amp; Series</div>
+    <div class="version">v1.4.1 &nbsp;·&nbsp; Movies &amp; Series</div>
     <p>Stream movies and series natively inside Stremio — no browser required.</p>
     <a class="btn btn-install" id="install-btn" href="#">&#9654; Install in Stremio</a>
     <a class="btn btn-donate" href="https://paypal.me/F100Pilot" target="_blank">&#9829; Donate via PayPal</a>
@@ -134,7 +140,7 @@ app.get('/', (req, res) => {
 });
 
 // ── Version check ───────────────────────────────────────────────────────────
-const CURRENT_VERSION = '1.2.0';
+const CURRENT_VERSION = '1.4.1';
 const GH_RELEASES_URL = 'https://api.github.com/repos/F100Pilot/stremio-addon-streamimdb/releases/latest';
 let _versionCache = null;
 let _versionCacheTs = 0;
@@ -167,7 +173,7 @@ app.get('/health', (req, res) => {
   const mem = process.memoryUsage();
   res.json({
     status: 'ok',
-    version: '1.3.0',
+    version: '1.4.1',
     uptimeSeconds: Math.floor((Date.now() - START_TIME) / 1000),
     scraper: getStatus(),
     health: getHealthStatus(),
@@ -185,9 +191,8 @@ app.get('/health', (req, res) => {
 
 const PROXY_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-function decodeProxy(encoded) {
-  try { return JSON.parse(Buffer.from(encoded, 'base64url').toString()); }
-  catch { return null; }
+function decodeProxy(token) {
+  return verify(token);
 }
 
 function parseRefererMeta(referer) {
@@ -199,11 +204,15 @@ function parseRefererMeta(referer) {
   return null;
 }
 
+function originFromReferer(referer) {
+  try { return new URL(referer).origin; } catch { return 'https://brightpathsignals.com'; }
+}
+
 function fetchManifest(url, referer) {
   return axios.get(url, {
     headers: {
       'User-Agent': PROXY_UA,
-      ...(referer ? { Referer: referer, Origin: 'https://brightpathsignals.com' } : {}),
+      ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
     },
     timeout: 10000, responseType: 'text', maxRedirects: 5,
     validateStatus: s => s < 500,
@@ -305,10 +314,10 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
       const t = line.trim();
       if (!t || t.startsWith('#')) return line;
       let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-      const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
+      const tok = sign({ u: abs, r: ref, b: base });
       return abs.includes('.m3u8')
-        ? `${SERVER_BASE}/hls/${enc}.m3u8`
-        : `${SERVER_BASE}/seg/${enc}.ts`;
+        ? `${SERVER_BASE}/hls/${tok}.m3u8`
+        : `${SERVER_BASE}/seg/${tok}.ts`;
     }).join('\n');
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
@@ -349,10 +358,10 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     const t = line.trim();
     if (!t || t.startsWith('#')) return line;
     let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-    const enc = Buffer.from(JSON.stringify({ u: abs, r: ref, b: base })).toString('base64url');
+    const tok = sign({ u: abs, r: ref, b: base });
     return abs.includes('.m3u8')
-      ? `${SERVER_BASE}/hls/${enc}.m3u8`
-      : `${SERVER_BASE}/seg/${enc}.ts`;
+      ? `${SERVER_BASE}/hls/${tok}.m3u8`
+      : `${SERVER_BASE}/seg/${tok}.ts`;
   }).join('\n');
 
   res.set('Content-Type', 'application/x-mpegURL');
@@ -386,7 +395,7 @@ app.all('/seg/:encoded.ts', async (req, res) => {
       const upstream = await axios.get(segmentUrl, {
         headers: {
           'User-Agent': PROXY_UA,
-          ...(referer ? { Referer: referer, Origin: 'https://brightpathsignals.com' } : {}),
+          ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
           ...(req.headers.range ? { Range: req.headers.range } : {}),
         },
         timeout: 30000, responseType: 'stream', maxRedirects: 5,
@@ -438,7 +447,19 @@ app.all('/seg/:encoded.ts', async (req, res) => {
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
-  console.log(`HTTP addon accessible at: http://127.0.0.1:${PORT}/manifest.json`);
-});
+// Em ambiente serverless (Vercel) o módulo é importado por api/index.js sem
+// abrir porta própria — a plataforma trata do listen.
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, () => {
+    console.log(`Add-on disponível em http://localhost:${PORT}/manifest.json`);
+    console.log(`HTTP addon accessible at: http://127.0.0.1:${PORT}/manifest.json`);
+  });
+
+  // Cloudflare Tunnel reuses upstream TCP connections. Node's default 5s
+  // keepAliveTimeout can cause connection resets and visible first-request delay.
+  // Increased for remote connections to prevent premature resets.
+  server.keepAliveTimeout = 90000;
+  server.headersTimeout = 95000;
+}
+
+module.exports = app;
