@@ -221,6 +221,36 @@ function fetchManifest(url, referer) {
   });
 }
 
+// Reescreve um manifesto HLS para que playlists/segmentos/chaves passem pelo
+// nosso proxy (mantém Referer/Origin correctos perante o CDN de origem).
+// Trata tanto linhas normais (URLs de sub-playlist/segmento) como atributos
+// URI="..." em tags #EXT-X-KEY / #EXT-X-MAP (chaves AES-128 e dados de init).
+function rewriteManifest(body, manifestUrl, referer) {
+  const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
+  const ref  = referer || '';
+
+  const proxyUri = (rawUri) => {
+    let abs; try { abs = new URL(rawUri, manifestUrl).href; } catch { return rawUri; }
+    const tok = sign({ u: abs, r: ref, b: base });
+    // Chaves/init segments não são .m3u8 nem .ts — usamos /seg para servir bytes
+    return abs.includes('.m3u8')
+      ? `${SERVER_BASE}/hls/${tok}.m3u8`
+      : `${SERVER_BASE}/seg/${tok}.ts`;
+  };
+
+  return body.split('\n').map(line => {
+    const t = line.trim();
+    if (!t) return line;
+
+    if (t.startsWith('#EXT-X-KEY') || t.startsWith('#EXT-X-MAP')) {
+      return line.replace(/URI="([^"]+)"/, (m, uri) => `URI="${proxyUri(uri)}"`);
+    }
+    if (t.startsWith('#')) return line;
+
+    return proxyUri(t);
+  }).join('\n');
+}
+
 // ── Segment retry: fresh base URL cache ──────────────────────────────────────
 const FRESH_BASE_TTL = 60 * 1000; // 60s
 const freshBases = new Map();
@@ -309,17 +339,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
   const cachedBody = getMfCache(manifestUrl);
   if (cachedBody) {
     console.log('[proxy/hls] manifest servido do mfCache');
-    const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
-    const ref  = data.r || '';
-    const body = cachedBody.split('\n').map(line => {
-      const t = line.trim();
-      if (!t || t.startsWith('#')) return line;
-      let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-      const tok = sign({ u: abs, r: ref, b: base });
-      return abs.includes('.m3u8')
-        ? `${SERVER_BASE}/hls/${tok}.m3u8`
-        : `${SERVER_BASE}/seg/${tok}.ts`;
-    }).join('\n');
+    const body = rewriteManifest(cachedBody, manifestUrl, data.r);
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
     res.set('Access-Control-Allow-Origin', '*');
@@ -353,17 +373,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 
   if (upstream.status !== 200) return res.status(upstream.status).send('CDN error');
 
-  const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
-  const ref  = data.r || '';
-  const body = upstream.data.split('\n').map(line => {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) return line;
-    let abs; try { abs = new URL(t, manifestUrl).href; } catch { abs = t; }
-    const tok = sign({ u: abs, r: ref, b: base });
-    return abs.includes('.m3u8')
-      ? `${SERVER_BASE}/hls/${tok}.m3u8`
-      : `${SERVER_BASE}/seg/${tok}.ts`;
-  }).join('\n');
+  const body = rewriteManifest(upstream.data, manifestUrl, data.r);
 
   res.set('Content-Type', 'application/x-mpegURL');
   res.set('Cache-Control', 'no-cache');
