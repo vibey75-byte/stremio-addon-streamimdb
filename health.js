@@ -1,7 +1,6 @@
 'use strict';
 const axios = require('axios');
 
-const VAPLAYER_API_URL = process.env.VAPLAYER_API_URL || 'https://streamdata.vaplayer.ru/api.php';
 const CHECK_INTERVAL = parseInt(process.env.HEALTH_CHECK_INTERVAL_MS) || 5 * 60 * 1000; // 5min
 const ALERT_EMAIL = process.env.ALERT_EMAIL;
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK;
@@ -10,25 +9,26 @@ let lastStatus = 'ok';
 let downSince = null;
 let alertSent = false;
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
+// Testa a fonte primária (VixSrc). TMDB id 11 = Star Wars (1977).
 async function testAPI() {
   try {
-    const res = await axios.get(VAPLAYER_API_URL, {
-      params: { imdb: 'tt0076759', type: 'movie' },
+    const res = await axios.get('https://vixsrc.to/api/movie/11', {
       headers: {
         'User-Agent': UA,
-        'Referer': 'https://brightpathsignals.com/embed/movie/tt0076759',
-        'Origin': 'https://brightpathsignals.com',
-        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Referer': 'https://vixsrc.to',
+        'Origin': 'https://vixsrc.to',
       },
       timeout: 8000,
+      validateStatus: s => s < 500,
     });
 
-    if (res.status === 200 && res.data?.data?.stream_urls?.length > 0) {
-      return { ok: true, message: 'API respondeu com streams' };
+    if (res.status === 200 && res.data && res.data.src) {
+      return { ok: true, message: 'VixSrc respondeu com src' };
     }
-    return { ok: false, message: `API status ${res.status}, sem streams` };
+    return { ok: false, message: `VixSrc status ${res.status}, sem src` };
   } catch (e) {
     return { ok: false, message: `Erro: ${e.message}` };
   }
