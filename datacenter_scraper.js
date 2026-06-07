@@ -56,7 +56,11 @@ async function tryVixsrc(tmdbId, type, season, episode) {
     const masterUrl = `${playlist}${sep}token=${token}&expires=${expires}&h=1`;
     console.log(`[dc:vixsrc] ✓ master: ${masterUrl.substring(0, 70)}...`);
 
-    return [{ url: masterUrl, quality: 'Auto', proxyable: true, referer: apiUrl }];
+    // proxyable:false — entregamos o URL directo da CDN. O nosso proxy corre
+    // num IP de datacenter do Vercel, que a CDN bloqueia com 403 (mesmo anti-bot
+    // que bloqueia a API). O cliente Stremio corre no IP residencial do
+    // utilizador, que tem mais probabilidade de passar.
+    return [{ url: masterUrl, quality: 'Auto', proxyable: false, referer: apiUrl }];
   } catch (e) {
     console.log(`[dc:vixsrc] erro: ${e.message}`);
     return null;
@@ -88,7 +92,9 @@ async function tryVidlink(tmdbId, type, season, episode) {
     if (!playlist) { console.log('[dc:vidlink] sem playlist'); return null; }
 
     console.log(`[dc:vidlink] ✓ playlist: ${playlist.substring(0, 70)}...`);
-    return [{ url: playlist, quality: 'Auto', proxyable: true, referer: VIDLINK_REF + '/' }];
+    // proxyable:false — ver nota em tryVixsrc: a CDN bloqueia o IP de
+    // datacenter do nosso proxy; o cliente (IP residencial) tenta directo.
+    return [{ url: playlist, quality: 'Auto', proxyable: false, referer: VIDLINK_REF + '/' }];
   } catch (e) {
     console.log(`[dc:vidlink] erro: ${e.message}`);
     return null;
