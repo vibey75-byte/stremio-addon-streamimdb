@@ -26,8 +26,8 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-function makeHlsProxyUrl(streamUrl, referer) {
-  const token = sign({ u: streamUrl, r: referer });
+function makeHlsProxyUrl(streamUrl, referer, meta) {
+  const token = sign({ u: streamUrl, r: referer, m: meta });
   return `${SERVER_BASE}/hls/${token}.m3u8`;
 }
 
@@ -57,10 +57,11 @@ builder.defineStreamHandler(async (args) => {
     // A dedup/cache do scraper trata dos casos transitórios.
 
     if (result && result.type === 'direct') {
+      const meta = { imdbId, type, season, episode };
       const streams = result.streams.map(s => {
         const streamUrl = s.proxyable === false
           ? s.url
-          : makeHlsProxyUrl(s.url, s.referer || referer);
+          : makeHlsProxyUrl(s.url, s.referer || referer, meta);
         return {
           url:   streamUrl,
           name:  'StreamIMDb',

@@ -196,13 +196,13 @@ function decodeProxy(token) {
   return verify(token);
 }
 
-function parseRefererMeta(referer) {
-  if (!referer) return null;
-  const tv = referer.match(/\/embed\/tv\/(tt\d+)\/(\d+)\/(\d+)/);
-  if (tv) return { imdbId: tv[1], type: 'series', season: tv[2], episode: tv[3] };
-  const mv = referer.match(/\/embed\/movie\/(tt\d+)/);
-  if (mv) return { imdbId: mv[1], type: 'movie', season: null, episode: null };
-  return null;
+// Meta (imdbId/type/season/episode) vem embebido no token assinado (campo `m`),
+// gravado em addon.js no momento da resolução — assim o refresh funciona com
+// qualquer formato de referer (vixsrc.to, vidlink.pro, streamimdb.me, etc.),
+// sem depender de regex que só reconhecia o formato antigo /embed/{tv,movie}/.
+function parseRefererMeta(meta) {
+  if (!meta || !meta.imdbId) return null;
+  return meta;
 }
 
 function originFromReferer(referer) {
@@ -225,13 +225,13 @@ function fetchManifest(url, referer) {
 // nosso proxy (mantém Referer/Origin correctos perante o CDN de origem).
 // Trata tanto linhas normais (URLs de sub-playlist/segmento) como atributos
 // URI="..." em tags #EXT-X-KEY / #EXT-X-MAP (chaves AES-128 e dados de init).
-function rewriteManifest(body, manifestUrl, referer) {
+function rewriteManifest(body, manifestUrl, referer, meta) {
   const base = manifestUrl.substring(0, manifestUrl.lastIndexOf('/') + 1);
   const ref  = referer || '';
 
   const proxyUri = (rawUri) => {
     let abs; try { abs = new URL(rawUri, manifestUrl).href; } catch { return rawUri; }
-    const tok = sign({ u: abs, r: ref, b: base });
+    const tok = sign({ u: abs, r: ref, b: base, m: meta });
     // Chaves/init segments não são .m3u8 nem .ts — usamos /seg para servir bytes
     return abs.includes('.m3u8')
       ? `${SERVER_BASE}/hls/${tok}.m3u8`
@@ -339,7 +339,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
   const cachedBody = getMfCache(manifestUrl);
   if (cachedBody) {
     console.log('[proxy/hls] manifest servido do mfCache');
-    const body = rewriteManifest(cachedBody, manifestUrl, data.r);
+    const body = rewriteManifest(cachedBody, manifestUrl, data.r, data.m);
     res.set('Content-Type', 'application/x-mpegURL');
     res.set('Cache-Control', 'no-cache');
     res.set('Access-Control-Allow-Origin', '*');
@@ -350,7 +350,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
     upstream = await fetchManifest(manifestUrl, data.r);
   } catch (err) {
     console.error('[proxy/hls] upstream falhou:', err.message);
-    const meta = parseRefererMeta(data.r);
+    const meta = parseRefererMeta(data.m);
     if (meta) {
       invalidateCache(meta.imdbId, meta.type, meta.season, meta.episode);
       try {
@@ -373,7 +373,7 @@ app.all('/hls/:encoded.m3u8', async (req, res) => {
 
   if (upstream.status !== 200) return res.status(upstream.status).send('CDN error');
 
-  const body = rewriteManifest(upstream.data, manifestUrl, data.r);
+  const body = rewriteManifest(upstream.data, manifestUrl, data.r, data.m);
 
   res.set('Content-Type', 'application/x-mpegURL');
   res.set('Cache-Control', 'no-cache');
@@ -435,7 +435,7 @@ app.all('/seg/:encoded.ts', async (req, res) => {
       console.error(`[proxy/seg] attempt ${attempt + 1}/${MAX_SEG_RETRIES + 1} failed (${status || 'network'}): ${err.message}`);
 
       if (attempt < MAX_SEG_RETRIES && retryable && oldBase && segmentUrl.startsWith(oldBase)) {
-        const meta = parseRefererMeta(referer);
+        const meta = parseRefererMeta(data.m);
         if (meta) {
           try {
             const newBase = await refreshBase(meta.imdbId, meta.type, meta.season, meta.episode, referer);
