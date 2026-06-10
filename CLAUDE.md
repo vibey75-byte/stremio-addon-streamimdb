@@ -97,6 +97,19 @@ são best-effort — confirmar que estão vivas antes de confiar nelas.
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — (alertas Telegram) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `ALERT_EMAIL` | — (alertas email) |
 | `SERVER_URL` | base pública (Cloudflare Tunnel) p/ os URLs do proxy |
+| `UPSTREAM_URL` | — relay p/ outro deployment do addon (ex.: servidor caseiro) como último recurso |
+| `UPSTREAM_TIMEOUT_MS` | `25000` (timeout do relay; 1ª resolução no upstream pode demorar) |
+
+## Upstream relay (Vercel → servidor caseiro)
+A VixSrc passou a devolver **403 logo na API** a IPs de datacenter (confirmado
+pelo health check no Vercel: `API DOWN: VixSrc status 403, sem src`), deixando
+o deploy do Vercel sem fontes. `upstream_relay.js` acrescenta um último recurso:
+com `UPSTREAM_URL` definido (ex.: o domínio público do servidor caseiro via
+Cloudflare Tunnel), o Vercel pede `GET {UPSTREAM_URL}/stream/{type}/{id}.json`
+e entrega os streams do upstream **directos ao cliente** (`proxyable:false` —
+os URLs já passam pelo proxy `/hls` do upstream, que tem o IP residencial bom).
+Sem a var, é um no-op. O health check também testa o upstream antes de declarar
+DOWN (estado "degradado" = VixSrc 403 mas relay OK).
 
 ## Padrões
 - CommonJS (`require`). `try/catch` em todos os handlers. Séries: `tt1234567:1:2` → split.

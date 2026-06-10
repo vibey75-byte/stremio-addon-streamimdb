@@ -28,10 +28,28 @@ async function testAPI() {
     if (res.status === 200 && res.data && res.data.src) {
       return { ok: true, message: 'VixSrc respondeu com src' };
     }
+    // VixSrc bloqueia IPs de datacenter (403 na API). Se houver relay para o
+    // servidor caseiro (UPSTREAM_URL), o serviço continua de pé — testa-o
+    // antes de declarar DOWN, para o alerta reflectir o estado real.
+    const upstreamOk = await testUpstream();
+    if (upstreamOk) {
+      return { ok: true, message: `VixSrc status ${res.status} mas upstream relay OK (degradado)` };
+    }
     return { ok: false, message: `VixSrc status ${res.status}, sem src` };
   } catch (e) {
     return { ok: false, message: `Erro: ${e.message}` };
   }
+}
+
+// O upstream (servidor caseiro) responde ao manifest? Basta para saber que o
+// relay tem para onde encaminhar.
+async function testUpstream() {
+  const upstream = (process.env.UPSTREAM_URL || '').replace(/\/$/, '');
+  if (!upstream) return false;
+  try {
+    const res = await axios.get(`${upstream}/manifest.json`, { timeout: 8000, validateStatus: s => s < 500 });
+    return res.status === 200 && res.data && res.data.id;
+  } catch { return false; }
 }
 
 async function sendAlert(subject, body) {

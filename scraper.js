@@ -8,6 +8,7 @@
 const { fetchFromProviders } = require('./providers');
 const { fetchFromAltSources } = require('./alt_scraper');
 const { fetchFromDatacenterSources } = require('./datacenter_scraper');
+const { fetchFromUpstream } = require('./upstream_relay');
 
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS) || 5 * 60 * 1000; // 5min
 const MAX_QUEUE = parseInt(process.env.MAX_QUEUE)    || 8;
@@ -85,6 +86,14 @@ async function fetchVideoSource(imdbId, type = 'movie', season = null, episode =
       const streams = await fetchFromProviders(imdbId, type, season, episode);
       if (streams) { console.log('[scraper] movie-web providers OK'); setCached(key, streams); return streams; }
     } catch (e) { console.log('[scraper] movie-web providers falhou:', e.message); }
+
+    // 4. Relay para o servidor caseiro (UPSTREAM_URL) — quando as CDNs bloqueiam
+    // o IP de datacenter do Vercel (VixSrc 403), o servidor de casa (IP
+    // residencial) resolve e serve via o proxy /hls dele. No-op sem a var.
+    try {
+      const streams = await fetchFromUpstream(imdbId, type, season, episode);
+      if (streams) { console.log('[scraper] upstream relay OK'); setCached(key, streams); return streams; }
+    } catch (e) { console.log('[scraper] upstream relay falhou:', e.message); }
 
     return null;
   })().finally(() => {
