@@ -50,6 +50,9 @@ app.use(compression());
 
 app.use(getRouter(addonInterface));
 
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+app.get('/favicon.png', (req, res) => res.status(204).end());
+
 app.get('/', (req, res) => {
   res.setHeader('content-type', 'text/html');
   res.end(`<!DOCTYPE html>
