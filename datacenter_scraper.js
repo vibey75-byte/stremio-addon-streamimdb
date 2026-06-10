@@ -108,11 +108,13 @@ async function fetchFromDatacenterSources(imdbId, type, season, episode) {
   const tmdbId = tmdb.id;
   console.log(`[dc] IMDb ${imdbId} → TMDB ${tmdbId}`);
 
-  const vix = await tryVixsrc(tmdbId, type, season, episode);
-  if (vix && vix.length) return vix;
-
+  // VixSrc devolve 403 logo na API a partir de IPs de datacenter (confirmado
+  // via /diag/sources) — tenta primeiro o Vidlink, que continua a funcionar.
   const vid = await tryVidlink(tmdbId, type, season, episode);
   if (vid && vid.length) return vid;
+
+  const vix = await tryVixsrc(tmdbId, type, season, episode);
+  if (vix && vix.length) return vix;
 
   return null;
 }
