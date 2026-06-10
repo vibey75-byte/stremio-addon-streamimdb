@@ -204,6 +204,42 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Diagnóstico: sonda fontes candidatas a partir do IP REAL deste deploy
+// (datacenter no Vercel). Reporta status HTTP + se a resposta parece útil.
+// Uso: GET /diag/sources?tmdb=11   (11 = Star Wars; usa ?imdb=tt... também)
+const DIAG_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+app.get('/diag/sources', async (req, res) => {
+  const tmdb = req.query.tmdb || '11';
+  const probes = [
+    { name: 'vixsrc/api',   url: `https://vixsrc.to/api/movie/${tmdb}`,        ref: 'https://vixsrc.to',   hint: d => !!(d && d.src) },
+    { name: 'vixsrc/movie', url: `https://vixsrc.to/movie/${tmdb}`,            ref: 'https://vixsrc.to',   hint: d => typeof d === 'string' && /token|playlist/i.test(d) },
+    { name: 'vidsrc.xyz',   url: `https://vidsrc.xyz/embed/movie/${tmdb}`,     ref: 'https://vidsrc.xyz',  hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'vidsrc.cc',    url: `https://vidsrc.cc/v2/embed/movie/${tmdb}`,   ref: 'https://vidsrc.cc',   hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'vidlink.pro',  url: `https://vidlink.pro/movie/${tmdb}`,          ref: 'https://vidlink.pro', hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'embed.su',     url: `https://embed.su/embed/movie/${tmdb}`,       ref: 'https://embed.su',    hint: d => typeof d === 'string' && d.length > 500 },
+    { name: '2embed.cc',    url: `https://www.2embed.cc/embed/${tmdb}`,        ref: 'https://www.2embed.cc',hint: d => typeof d === 'string' && d.length > 500 },
+    { name: 'multiembed',   url: `https://multiembed.mov/?video_id=${tmdb}&tmdb=1`, ref: 'https://multiembed.mov', hint: d => typeof d === 'string' && d.length > 500 },
+  ];
+  const results = await Promise.all(probes.map(async p => {
+    const t0 = Date.now();
+    try {
+      const r = await axios.get(p.url, {
+        headers: { 'User-Agent': DIAG_UA, 'Accept': '*/*', Referer: p.ref, Origin: p.ref },
+        timeout: 9000, maxRedirects: 5, validateStatus: () => true, httpAgent, httpsAgent,
+        responseType: 'text', transformResponse: x => x,
+      });
+      let data = r.data;
+      try { data = JSON.parse(r.data); } catch {}
+      return { name: p.name, status: r.status, ms: Date.now() - t0,
+        looksUsable: r.status === 200 && (() => { try { return !!p.hint(data); } catch { return false; } })(),
+        bytes: typeof r.data === 'string' ? r.data.length : 0 };
+    } catch (e) {
+      return { name: p.name, status: 0, ms: Date.now() - t0, error: e.code || e.message };
+    }
+  }));
+  res.json({ note: 'Sondado a partir do IP deste deploy (datacenter no Vercel). looksUsable=true → vale a pena integrar.', tmdb, results });
+});
+
 // ── HLS proxy ────────────────────────────────────────────────────────────────
 // Stremio fetches HLS manifests and segments through these routes so that
 // the CDN always receives the required Referer/Origin headers.
