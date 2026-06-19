@@ -25,15 +25,19 @@ const SERVER_BASE = (
   `http://localhost:${PORT}`
 ).replace(/\/$/, '');
 
-// Em serverless (Vercel) cada cold-start é um processo isolado. Sem estas
-// duas vars FIXAS nos Project Settings, o proxy parte-se de forma silenciosa:
-// - SERVER_URL em falta → cai para VERCEL_URL (domínio efémero por deployment,
-//   diferente do domínio estável instalado no Stremio) → tokens apontam para
-//   o host errado
-// - PROXY_SECRET em falta → cada instância gera um segredo aleatório próprio →
-//   a instância que assina o token (/stream) quase nunca é a mesma que o
-//   verifica (/hls, /seg) → verify() falha sempre → 400 silencioso → o player
-//   muda para LibVLC e fica preso sem mais nenhum pedido
+// ============================================================
+// 🔧 إعدادات الـ Proxy (أضف هذا القسم)
+// ============================================================
+// استخدم متغير البيئة PROXY_SERVER_URL لتحديد رابط الـ Proxy
+// مثال: PROXY_SERVER_URL=https://your-proxy.onrender.com
+const PROXY_SERVER_URL = process.env.PROXY_SERVER_URL || null;
+if (PROXY_SERVER_URL) {
+  console.log(`[config] Proxy enabled: ${PROXY_SERVER_URL}`);
+} else {
+  console.warn('[config] PROXY_SERVER_URL not set — using direct fetch (may fail with 403)');
+}
+// ============================================================
+
 if (process.env.VERCEL) {
   if (!process.env.SERVER_URL) {
     console.warn(`[config] AVISO: SERVER_URL não definida — a usar ${SERVER_BASE} (domínio efémero do deployment). Define SERVER_URL=https://<o-teu-dominio-estavel>.vercel.app nos Project Settings → Environment Variables.`);
@@ -266,17 +270,42 @@ function originFromReferer(referer) {
   try { return new URL(referer).origin; } catch { return 'https://brightpathsignals.com'; }
 }
 
+// ============================================================
+// 🔧 دالة fetchManifest المعدّلة (مع دعم الـ Proxy)
+// ============================================================
 function fetchManifest(url, referer) {
+  // إذا كان الـ Proxy مفعّلاً، مرر الطلب عبره
+  if (PROXY_SERVER_URL) {
+    const proxyUrl = `${PROXY_SERVER_URL}/proxy?url=${encodeURIComponent(url)}`;
+    console.log(`[proxy] Fetching via proxy: ${url}`);
+    return axios.get(proxyUrl, {
+      headers: {
+        'User-Agent': PROXY_UA,
+        ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
+      },
+      timeout: 15000, 
+      responseType: 'text', 
+      maxRedirects: 5,
+      validateStatus: s => s < 500,
+      httpAgent, httpsAgent,
+    });
+  }
+  
+  // الطلب المباشر (في حال عدم تفعيل الـ Proxy)
+  console.log(`[proxy] Direct fetch (no proxy): ${url}`);
   return axios.get(url, {
     headers: {
       'User-Agent': PROXY_UA,
       ...(referer ? { Referer: referer, Origin: originFromReferer(referer) } : {}),
     },
-    timeout: 10000, responseType: 'text', maxRedirects: 5,
+    timeout: 10000, 
+    responseType: 'text', 
+    maxRedirects: 5,
     validateStatus: s => s < 500,
     httpAgent, httpsAgent,
   });
 }
+// ============================================================
 
 // Reescreve um manifesto HLS para que playlists/segmentos/chaves passem pelo
 // nosso proxy (mantém Referer/Origin correctos perante o CDN de origem).
